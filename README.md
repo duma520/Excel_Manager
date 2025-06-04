@@ -1,5 +1,8 @@
 # 软件截图：
 
+新建用户时候自定义需要的资料，后期暂时无法增加，以后看看机缘，看看是否能改，不好说。
+![image](https://github.com/user-attachments/assets/834a5f94-e808-4183-8a63-4aa8de35760a)
+
 ![image](https://github.com/user-attachments/assets/3cec4343-97d7-45d1-87a9-c67d1b300be1)
 
 ![image](https://github.com/user-attachments/assets/d505361c-6452-4b14-9923-ccbd4e7a3a97)
