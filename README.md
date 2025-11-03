@@ -3,11 +3,13 @@
 新建用户时候自定义需要的资料，后期暂时无法增加，以后看看机缘，看看是否能改，不好说。
 ![image](https://github.com/user-attachments/assets/834a5f94-e808-4183-8a63-4aa8de35760a)
 
-![image](https://github.com/user-attachments/assets/3cec4343-97d7-45d1-87a9-c67d1b300be1)
+<img width="716" height="439" alt="image" src="https://github.com/user-attachments/assets/a2269bd6-85dd-423a-bee6-ccf981150d17" />
 
-![image](https://github.com/user-attachments/assets/d505361c-6452-4b14-9923-ccbd4e7a3a97)
+<img width="1216" height="839" alt="image" src="https://github.com/user-attachments/assets/d84bb4bc-f551-4b5d-9322-b3e92bb3027e" />
 
-![image](https://github.com/user-attachments/assets/f2d3ad74-4960-4f39-bb9f-4ad7eb9b3378)
+<img width="1216" height="839" alt="image" src="https://github.com/user-attachments/assets/eddcdd80-3d55-4ce5-815e-add7507865fc" />
+
+<img width="1216" height="839" alt="image" src="https://github.com/user-attachments/assets/34599559-f884-48bc-8529-0a0ad911a589" />
 
 
 # Excel数据管理系统 - 全面详细使用说明书
