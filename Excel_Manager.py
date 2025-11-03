@@ -8,8 +8,8 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                             QInputDialog, QListWidget, QAbstractItemView, QHeaderView,
                             QDialog, QCheckBox, QFileDialog, QStatusBar, QAction, QMenu,
                             QToolBar, QSizePolicy, QSpacerItem, QSplitter, QTextEdit,
-                            QScrollArea, QDateEdit)
-from PyQt5.QtGui import QIcon, QPixmap, QImage, QFont, QTextDocument, QColor, QPainter
+                            QScrollArea, QDateEdit, QShortcut)
+from PyQt5.QtGui import QIcon, QPixmap, QImage, QFont, QTextDocument, QColor, QPainter, QKeySequence
 from PyQt5.QtCore import Qt, QSize, QTimer, QRect, QDate
 from PyQt5.QtPrintSupport import QPrinter, QPrintDialog
 from barcode import EAN13
@@ -20,11 +20,36 @@ import io
 from PIL import Image
 import json
 from datetime import datetime
+from pypinyin import lazy_pinyin, Style
+
+import subprocess
+import sys
+
+def install_package(package):
+    """自动安装缺失的包"""
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+        print(f"成功安装 {package}")
+        return True
+    except subprocess.CalledProcessError:
+        print(f"安装 {package} 失败，请手动安装: pip install {package}")
+        return False
+
+# 检查并安装 pypinyin
+try:
+    from pypinyin import lazy_pinyin, Style
+except ImportError:
+    print("pypinyin 未安装，正在尝试自动安装...")
+    if install_package("pypinyin"):
+        from pypinyin import lazy_pinyin, Style
+    else:
+        print("pypinyin 安装失败，拼音搜索功能将不可用")
+
 
 class ProjectInfo:
     """项目信息元数据（集中管理所有项目相关信息）"""
-    VERSION = "4.21.0"
-    BUILD_DATE = "2025-06-02"
+    VERSION = "4.30.2"
+    BUILD_DATE = "2025-11-03"
     # BUILD_DATE = datetime.now().strftime("%Y-%m-%d")  # 修改为动态获取当前日期
     AUTHOR = "杜玛"
     LICENSE = "MIT"
@@ -46,7 +71,8 @@ class ProjectInfo:
         "4.17.0": "增强数据导入功能，支持自动创建用户和数据结构识别。",
         "4.18.0": "增加专门麻将规则JSON文件导入功能。",
         "4.20.0": "增加修改用户名功能。",
-        "4.21.0": "增加数据库备份恢复功能。"
+        "4.21.0": "增加数据库备份恢复功能。",
+        "4.30.0": "增加拼音首字搜索和持续优化功能。"
     }
     HELP_TEXT = """
 数据管理系统使用说明
@@ -236,6 +262,8 @@ class UserDatabase:
         self._create_tables()
         # 设置WAL模式
         self.cursor.execute("PRAGMA journal_mode=WAL")
+        # 初始化拼音字段
+        self._init_pinyin_columns()
     
     def _create_tables(self):
         pass
@@ -332,22 +360,143 @@ class UserDatabase:
         
         return columns_config
 
+    def _init_pinyin_columns(self):
+        """初始化拼音字段系统"""
+        try:
+            # 检查是否已启用拼音字段功能
+            self.cursor.execute("SELECT value FROM config WHERE key='pinyin_enabled'")
+            result = self.cursor.fetchone()
+            self.pinyin_enabled = result and result[0] == '1'
+            
+            if not self.pinyin_enabled:
+                # 自动评估是否启用拼音字段
+                self._auto_enable_pinyin()
+                
+        except:
+            self.pinyin_enabled = False
     
+    def _auto_enable_pinyin(self):
+        """自动评估并启用拼音字段功能"""
+        try:
+            # 检查数据量
+            count = self.get_data_count()
+            
+            # 如果数据量较大(>100条)，启用拼音字段优化
+            if count > 100:
+                self._enable_pinyin_system()
+                print(f"[DEBUG] 自动启用拼音字段优化，数据量: {count}")
+        except:
+            pass
+    
+    def _enable_pinyin_system(self):
+        """启用拼音字段系统"""
+        try:
+            # 为所有文本列添加拼音字段
+            self.cursor.execute('PRAGMA table_info(data)')
+            columns = [row[1] for row in self.cursor.fetchall()]
+            
+            for col in columns:
+                pinyin_col = f"{col}_pinyin"
+                # 检查是否已存在拼音列
+                self.cursor.execute(f"PRAGMA table_info(data)")
+                existing_columns = [row[1] for row in self.cursor.fetchall()]
+                
+                if pinyin_col not in existing_columns:
+                    # 添加拼音列
+                    self.cursor.execute(f"ALTER TABLE data ADD COLUMN {pinyin_col} TEXT")
+            
+            # 标记拼音系统已启用
+            self.cursor.execute("INSERT OR REPLACE INTO config VALUES ('pinyin_enabled', '1')")
+            self.conn.commit()
+            self.pinyin_enabled = True
+            
+            # 为现有数据生成拼音
+            self._generate_pinyin_for_existing_data()
+            
+        except Exception as e:
+            print(f"[DEBUG] 启用拼音系统失败: {str(e)}")
+            self.pinyin_enabled = False
+    
+    def _generate_pinyin_for_existing_data(self):
+        """为现有数据生成拼音字段"""
+        if not self.pinyin_enabled:
+            return
+            
+        try:
+            self.cursor.execute('PRAGMA table_info(data)')
+            columns = [row[1] for row in self.cursor.fetchall()]
+            
+            # 获取所有数据
+            self.cursor.execute('SELECT rowid, * FROM data')
+            all_data = self.cursor.fetchall()
+            
+            for row_data in all_data:
+                rowid = row_data[0]
+                update_data = {}
+                
+                for i, value in enumerate(row_data[1:], 1):
+                    if i-1 < len(columns):
+                        col_name = columns[i-1]
+                        pinyin_col = f"{col_name}_pinyin"
+                        
+                        if value and isinstance(value, str) and pinyin_col in columns:
+                            # 生成拼音首字母
+                            pinyin_initials = self._get_pinyin_initials(str(value))
+                            update_data[pinyin_col] = pinyin_initials
+                
+                if update_data:
+                    set_clause = ', '.join([f"{key}=?" for key in update_data.keys()])
+                    sql = f"UPDATE data SET {set_clause} WHERE rowid=?"
+                    self.cursor.execute(sql, tuple(update_data.values()) + (rowid,))
+            
+            self.conn.commit()
+            print(f"[DEBUG] 已为 {len(all_data)} 条记录生成拼音字段")
+            
+        except Exception as e:
+            print(f"[DEBUG] 生成拼音字段失败: {str(e)}")
+
     def insert_data(self, data):
-        columns = ', '.join(data.keys())
-        placeholders = ', '.join(['?'] * len(data))
+        """插入数据，同时生成拼音字段"""
+        # 添加拼音字段
+        data_with_pinyin = self._add_pinyin_to_data(data)
+        columns = ', '.join(data_with_pinyin.keys())
+        placeholders = ', '.join(['?'] * len(data_with_pinyin))
         sql = f"INSERT INTO data ({columns}) VALUES ({placeholders})"
-        self.cursor.execute(sql, tuple(data.values()))
+        self.cursor.execute(sql, tuple(data_with_pinyin.values()))
         self.conn.commit()
         return self.cursor.lastrowid
     
     def update_data(self, rowid, data):
-        set_clause = ', '.join([f"{key}=?" for key in data.keys()])
+        """更新数据，同时更新拼音字段"""
+        # 添加拼音字段
+        data_with_pinyin = self._add_pinyin_to_data(data)
+        set_clause = ', '.join([f"{key}=?" for key in data_with_pinyin.keys()])
         sql = f"UPDATE data SET {set_clause} WHERE rowid=?"
-        self.cursor.execute(sql, tuple(data.values()) + (rowid,))
+        self.cursor.execute(sql, tuple(data_with_pinyin.values()) + (rowid,))
         self.conn.commit()
         return self.cursor.rowcount > 0
     
+    def _add_pinyin_to_data(self, data):
+        """为数据添加拼音字段"""
+        if not self.pinyin_enabled:
+            return data
+            
+        data_with_pinyin = data.copy()
+        
+        # 获取现有列信息
+        self.cursor.execute('PRAGMA table_info(data)')
+        existing_columns = [row[1] for row in self.cursor.fetchall()]
+        
+        for key, value in data.items():
+            if isinstance(value, str) and value.strip():
+                pinyin_key = f"{key}_pinyin"
+                # 只有拼音列存在时才添加
+                if pinyin_key in existing_columns:
+                    pinyin_initials = self._get_pinyin_initials(value)
+                    data_with_pinyin[pinyin_key] = pinyin_initials
+        
+        return data_with_pinyin
+
     def delete_data(self, rowid):
         sql = "DELETE FROM data WHERE rowid=?"
         self.cursor.execute(sql, (rowid,))
@@ -378,7 +527,65 @@ class UserDatabase:
         sql = f"SELECT rowid, * FROM data WHERE {' OR '.join(conditions)}"
         self.cursor.execute(sql, params)
         return self.cursor.fetchall()
-    
+
+    def search_data_enhanced(self, keyword):
+        """增强搜索：支持中文、英文、拼音、拼音首字母模糊搜索"""
+        self.cursor.execute('PRAGMA table_info(data)')
+        columns = [row[1] for row in self.cursor.fetchall()]
+        
+        # 生成拼音和拼音首字母
+        from pypinyin import lazy_pinyin, Style
+        
+        # 中文转拼音
+        pinyin_full = ''.join(lazy_pinyin(keyword))
+        # 中文转拼音首字母
+        pinyin_initials = ''.join(lazy_pinyin(keyword, style=Style.FIRST_LETTER))
+        
+        conditions = []
+        params = []
+        
+        for col in columns:
+            # 原始关键词搜索
+            conditions.append(f"{col} LIKE ?")
+            params.append(f"%{keyword}%")
+            
+            # 拼音全拼搜索
+            if pinyin_full and pinyin_full != keyword:
+                conditions.append(f"{col} LIKE ?")
+                params.append(f"%{pinyin_full}%")
+            
+            # 拼音首字母搜索
+            if pinyin_initials and pinyin_initials != keyword:
+                conditions.append(f"{col} LIKE ?")
+                params.append(f"%{pinyin_initials}%")
+        
+        if not conditions:
+            return []
+        
+        sql = f"SELECT DISTINCT rowid, * FROM data WHERE {' OR '.join(conditions)}"
+        self.cursor.execute(sql, params)
+        return self.cursor.fetchall()
+
+    def search_data_all_columns(self, keyword):
+        """搜索所有列，包含完整数据"""
+        self.cursor.execute('PRAGMA table_info(data)')
+        columns = [row[1] for row in self.cursor.fetchall()]
+        
+        if not columns:
+            return []
+        
+        # 构建搜索条件
+        conditions = []
+        params = []
+        for col in columns:
+            conditions.append(f"{col} LIKE ?")
+            params.append(f"%{keyword}%")
+        
+        sql = f"SELECT rowid, * FROM data WHERE {' OR '.join(conditions)}"
+        self.cursor.execute(sql, params)
+        return self.cursor.fetchall()
+
+
     def get_all_data(self):
         self.cursor.execute('SELECT rowid, * FROM data')
         return self.cursor.fetchall()
@@ -529,6 +736,156 @@ class UserDatabase:
             print(f"恢复失败: {str(e)}")
             return False
 
+
+
+
+    def search_data_all_columns_enhanced(self, keyword):
+        """增强的全列搜索：智能选择搜索策略"""
+        # 检查数据量决定搜索策略
+        count = self.get_data_count()
+        
+        # 小数据量使用方案3，大数据量使用方案2
+        if count <= 100 or not self.pinyin_enabled:
+            return self._search_with_python_filter(keyword)  # 方案3
+        else:
+            return self._search_with_pinyin_columns(keyword)  # 方案2
+
+    def _search_with_pinyin_columns(self, keyword):
+        """使用拼音字段进行高效搜索（方案2）"""
+        self.cursor.execute('PRAGMA table_info(data)')
+        columns = [row[1] for row in self.cursor.fetchall()]
+        
+        if not columns:
+            return []
+        
+        # 检查是否为拼音缩写
+        is_pinyin_initials = keyword.isalpha() and 2 <= len(keyword) <= 6
+        
+        conditions = []
+        params = []
+        
+        for col in columns:
+            # 跳过拼音列本身
+            if col.endswith('_pinyin'):
+                continue
+                
+            # 原始关键词搜索
+            conditions.append(f"{col} LIKE ?")
+            params.append(f"%{keyword}%")
+            
+            # 如果是拼音缩写，搜索对应的拼音列
+            if is_pinyin_initials:
+                pinyin_col = f"{col}_pinyin"
+                if pinyin_col in columns:
+                    conditions.append(f"{pinyin_col} LIKE ?")
+                    params.append(f"%{keyword}%")
+        
+        if not conditions:
+            return []
+        
+        sql = f"SELECT DISTINCT rowid, * FROM data WHERE {' OR '.join(conditions)}"
+        self.cursor.execute(sql, params)
+        return self.cursor.fetchall()
+    
+    def _search_with_python_filter(self, keyword):
+        """使用Python过滤进行搜索（方案3）"""
+        self.cursor.execute('PRAGMA table_info(data)')
+        columns = [row[1] for row in self.cursor.fetchall()]
+        
+        if not columns:
+            return []
+        
+        # 生成拼音和拼音首字母
+        pinyin_full = ''.join(lazy_pinyin(keyword))
+        pinyin_initials = self._get_pinyin_initials(keyword)
+        
+        # 检查输入是否为纯字母（可能是拼音缩写）
+        is_possible_initials = keyword.isalpha() and 2 <= len(keyword) <= 6
+        
+        conditions = []
+        params = []
+        
+        for col in columns:
+            # 跳过拼音列本身
+            if col.endswith('_pinyin'):
+                continue
+                
+            # 原始关键词搜索
+            conditions.append(f"{col} LIKE ?")
+            params.append(f"%{keyword}%")
+            
+            # 拼音全拼搜索
+            if pinyin_full and pinyin_full != keyword:
+                conditions.append(f"{col} LIKE ?")
+                params.append(f"%{pinyin_full}%")
+            
+            # 拼音首字母搜索（用户输入中文，搜索拼音首字母）
+            if pinyin_initials and pinyin_initials != keyword:
+                conditions.append(f"{col} LIKE ?")
+                params.append(f"%{pinyin_initials}%")
+        
+        # 如果是可能的拼音缩写，获取所有数据并在Python中过滤
+        if is_possible_initials and not any(char in keyword for char in 'aeiou'):
+            # 获取所有数据
+            sql_all = "SELECT rowid, * FROM data"
+            self.cursor.execute(sql_all)
+            all_data = self.cursor.fetchall()
+            
+            # 过滤匹配拼音缩写的数据
+            filtered_data = []
+            for row in all_data:
+                if self._match_chinese_by_initials(row, keyword, columns):
+                    filtered_data.append(row)
+            
+            return filtered_data
+        
+        if not conditions:
+            return []
+        
+        sql = f"SELECT DISTINCT rowid, * FROM data WHERE {' OR '.join(conditions)}"
+        self.cursor.execute(sql, params)
+        return self.cursor.fetchall()
+
+    def _match_chinese_by_initials(self, row_data, initials, columns):
+        """检查行数据中的中文是否匹配拼音首字母缩写"""
+        try:
+            # 跳过rowid
+            for i, value in enumerate(row_data[1:], 1):
+                if i-1 < len(columns) and value and isinstance(value, str):
+                    # 只处理可能包含中文的文本
+                    if any('\u4e00' <= char <= '\u9fff' for char in str(value)):
+                        # 生成该中文的拼音首字母
+                        chinese_initials = self._get_pinyin_initials(str(value))
+                        if initials.lower() in chinese_initials.lower():
+                            return True
+        except:
+            pass
+        return False
+
+    def _get_pinyin_initials(self, keyword):
+        """安全地获取拼音首字母，兼容不同版本的pypinyin"""
+        try:
+            # 方法1: 使用FIRST_LETTER常量
+            try:
+                return ''.join(lazy_pinyin(keyword, style=Style.FIRST_LETTER))
+            except:
+                pass
+            
+            # 方法2: 使用备选常量名
+            try:
+                return ''.join(lazy_pinyin(keyword, style=Style.INITIALS))
+            except:
+                pass
+            
+            # 方法3: 手动处理
+            pinyin_list = lazy_pinyin(keyword)
+            initials = ''.join([p[0] for p in pinyin_list if p])
+            return initials
+            
+        except Exception as e:
+            print(f"[DEBUG] 获取拼音首字母失败: {str(e)}")
+            return ""
+
 class LoginWindow(QMainWindow):
     def __init__(self, user_manager):
         super().__init__()
@@ -593,6 +950,10 @@ class LoginWindow(QMainWindow):
         self.edit_user_btn = QPushButton('修改用户名')
         self.edit_user_btn.clicked.connect(self.edit_username)
         button_layout.addWidget(self.edit_user_btn)
+
+        self.modify_config_btn = QPushButton('修改列配置')
+        self.modify_config_btn.clicked.connect(self.modify_column_config)
+        button_layout.addWidget(self.modify_config_btn)
         
         self.import_data_btn = QPushButton('导入数据')
         self.import_data_btn.clicked.connect(self.import_data_file)
@@ -642,6 +1003,72 @@ class LoginWindow(QMainWindow):
             self.load_users()  # 刷新用户列表
         else:
             QMessageBox.warning(self, '警告', message)
+
+    def modify_column_config(self):
+        """修改用户的列配置"""
+        selected_items = self.user_list.selectedItems()
+        if not selected_items:
+            QMessageBox.warning(self, '警告', '请选择一个用户')
+            return
+        
+        username = selected_items[0].text()
+        
+        # 获取当前用户的配置
+        settings = self.user_manager.get_user_settings(username)
+        if not settings:
+            QMessageBox.warning(self, '警告', '无法获取用户配置')
+            return
+        
+        try:
+            current_config = json.loads(settings)
+        except:
+            QMessageBox.warning(self, '警告', '用户配置格式错误')
+            return
+        
+        # 警告用户这将重建数据库
+        reply = QMessageBox.warning(
+            self, '重要提示',
+            f'修改列配置将重建用户 "{username}" 的数据库，所有现有数据将会丢失！\n\n'
+            '确定要继续吗？',
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.No:
+            return
+        
+        # 显示列配置对话框，预填充当前配置
+        col_dialog = ColumnConfigDialog()
+        col_dialog.load_existing_config(current_config)
+        
+        if col_dialog.exec_() == QDialog.Accepted:
+            new_columns_config = col_dialog.get_columns_config()
+            if not new_columns_config:
+                QMessageBox.warning(self, '警告', '必须至少配置一列')
+                return
+            
+            # 重建数据库
+            db_file = self.user_manager.get_user_db_file(username)
+            if not db_file:
+                QMessageBox.warning(self, '警告', '无法获取数据库文件')
+                return
+            
+            try:
+                # 创建新的数据库结构
+                user_db = UserDatabase(db_file)
+                user_db.initialize_database(new_columns_config)
+                user_db.close()
+                
+                # 更新用户配置
+                new_settings = json.dumps(new_columns_config, ensure_ascii=False)
+                if self.user_manager.update_user_settings(username, new_settings):
+                    QMessageBox.information(self, '成功', '列配置修改成功')
+                else:
+                    QMessageBox.warning(self, '警告', '更新用户配置失败')
+                    
+            except Exception as e:
+                QMessageBox.critical(self, '错误', f'修改列配置失败: {str(e)}')
+
 
     def load_users(self):
         self.user_list.clear()
@@ -1157,6 +1584,66 @@ class ColumnConfigDialog(QDialog):
         
         return columns_config
 
+    def load_existing_config(self, columns_config):
+        """加载现有的列配置到对话框中"""
+        # 清除当前所有行
+        while self.table.rowCount() > 0:
+            self.table.removeRow(0)
+        
+        # 添加配置行
+        for col_config in columns_config:
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            
+            # 列名
+            col_name = QLineEdit(col_config.get('name', f'column_{row+1}'))
+            self.table.setCellWidget(row, 0, col_name)
+            
+            # 显示名称
+            col_label = QLineEdit(col_config.get('label', f'列 {row+1}'))
+            self.table.setCellWidget(row, 1, col_label)
+            
+            # 数据类型
+            data_type = QComboBox()
+            data_type.addItems(['文本(TEXT)', '整数(INTEGER)', '小数(REAL)', '二进制(BLOB)', 'EAN13条码'])
+            
+            # 设置当前类型
+            current_type = col_config.get('type', 'TEXT')
+            if current_type == 'EAN13':
+                data_type.setCurrentText('EAN13条码')
+            elif current_type in ['INTEGER', 'REAL', 'BLOB']:
+                data_type.setCurrentText(f'{current_type}({current_type})')
+            else:
+                data_type.setCurrentText('文本(TEXT)')
+            
+            self.table.setCellWidget(row, 2, data_type)
+            
+            # 必填
+            required_check = QCheckBox()
+            required_check.setChecked(col_config.get('is_required', False))
+            self.table.setCellWidget(row, 3, required_check)
+            
+            # 唯一
+            unique_check = QCheckBox()
+            unique_check.setChecked(col_config.get('is_unique', False))
+            self.table.setCellWidget(row, 4, unique_check)
+            
+            # 条形码
+            barcode_check = QCheckBox()
+            barcode_check.setChecked(col_config.get('is_barcode', False))
+            self.table.setCellWidget(row, 5, barcode_check)
+            
+            # 二维码
+            qrcode_check = QCheckBox()
+            qrcode_check.setChecked(col_config.get('is_qrcode', False))
+            self.table.setCellWidget(row, 6, qrcode_check)
+        
+        # 设置列宽
+        self.table.setColumnWidth(0, 120)
+        self.table.setColumnWidth(2, 120)
+        for i in range(3, 7):
+            self.table.setColumnWidth(i, 60)
+
 
 class MainWindow(QMainWindow):
     def __init__(self, username, db_file, settings, user_manager, parent_window=None):
@@ -1215,11 +1702,11 @@ class MainWindow(QMainWindow):
         search_layout = QHBoxLayout()
         
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText('输入关键词搜索...')
+        self.search_input.setPlaceholderText('输入关键词搜索所有列...')
         self.search_input.returnPressed.connect(self.search_data)
         search_layout.addWidget(self.search_input)
         
-        self.search_btn = QPushButton('搜索')
+        self.search_btn = QPushButton('搜索所有列')
         self.search_btn.clicked.connect(self.search_data)
         search_layout.addWidget(self.search_btn)
         
@@ -1267,6 +1754,149 @@ class MainWindow(QMainWindow):
         
         # 加载数据
         self.load_data()
+
+        # 添加表头排序功能
+        self.data_table.horizontalHeader().sectionClicked.connect(self.sort_table_by_column)
+        
+        # 初始化排序状态
+        self.sort_orders = {}  # 存储每列的排序状态：None(未排序), 'asc'(升序), 'desc'(降序)
+
+        # 添加快捷键支持
+        self.setup_shortcuts()
+
+    def setup_shortcuts(self):
+        """设置应用程序快捷键"""
+        # N 键 - 添加数据
+        self.add_shortcut = QShortcut(QKeySequence("Ctrl+N"), self)
+        self.add_shortcut.activated.connect(self.add_data)
+        
+        # 其他常用快捷键（可选添加）
+        self.search_shortcut = QShortcut(QKeySequence("Ctrl+F"), self)
+        self.search_shortcut.activated.connect(self.search_data)
+        
+        self.refresh_shortcut = QShortcut(QKeySequence("F5"), self)
+        self.refresh_shortcut.activated.connect(self.load_data)
+        
+        self.delete_shortcut = QShortcut(QKeySequence("Delete"), self)
+        self.delete_shortcut.activated.connect(self.delete_data)
+
+        self.edit_shortcut = QShortcut(QKeySequence("Ctrl+E"), self)
+        self.edit_shortcut.activated.connect(self.edit_selected_data)
+
+
+    def sort_table_by_column(self, column_index):
+        """根据点击的表头列进行排序"""
+        # 获取当前列的排序状态
+        current_order = self.sort_orders.get(column_index, None)
+        
+        # 切换排序状态：None -> asc -> desc -> None
+        if current_order is None:
+            new_order = 'asc'
+        elif current_order == 'asc':
+            new_order = 'desc'
+        else:
+            new_order = None
+        
+        # 更新排序状态
+        self.sort_orders[column_index] = new_order
+        
+        if new_order is None:
+            # 取消排序，恢复原始顺序
+            self.load_data()
+            return
+        
+        # 执行排序
+        self.perform_sorting(column_index, new_order)
+
+    def perform_sorting(self, column_index, order):
+        """执行实际的表格排序"""
+        try:
+            # 获取当前显示的所有数据（包括搜索后的数据）
+            row_count = self.data_table.rowCount()
+            if row_count == 0:
+                return
+            
+            # 收集所有行的数据和rowid
+            rows_data = []
+            for row in range(row_count):
+                row_data = []
+                rowid = None
+                
+                # 获取该行的所有单元格数据
+                for col in range(self.data_table.columnCount()):
+                    item = self.data_table.item(row, col)
+                    if item:
+                        if col == 0:  # 第一列保存rowid
+                            rowid = item.data(Qt.UserRole)
+                        row_data.append(item.text())
+                    else:
+                        # 处理有widget的单元格（条形码/二维码列）
+                        widget = self.data_table.cellWidget(row, col)
+                        if widget and isinstance(widget, QLabel):
+                            # 对于图像列，我们可以跳过排序或者使用特定值
+                            row_data.append("")  # 图像列不参与排序
+                        else:
+                            row_data.append("")
+                
+                if rowid is not None:
+                    rows_data.append((rowid, row_data))
+            
+            # 根据指定列进行排序
+            def sort_key(item):
+                text = item[1][column_index] if column_index < len(item[1]) else ""
+                
+                # 尝试转换为数字进行排序
+                try:
+                    if text.replace('.', '').replace('-', '').isdigit():
+                        return float(text) if '.' in text else int(text)
+                except:
+                    pass
+                
+                # 返回文本（支持中文排序）
+                return text
+            
+            # 执行排序
+            reverse = (order == 'desc')
+            rows_data.sort(key=sort_key, reverse=reverse)
+            
+            # 更新表格显示
+            self.data_table.setSortingEnabled(False)  # 暂时禁用内置排序
+            
+            for row, (rowid, row_data) in enumerate(rows_data):
+                for col, text in enumerate(row_data):
+                    if col < self.data_table.columnCount():
+                        item = self.data_table.item(row, col)
+                        if item:
+                            item.setText(text)
+            
+            # 更新表头显示排序指示器
+            self.update_header_sort_indicator(column_index, order)
+            
+            self.data_table.setSortingEnabled(True)
+            
+        except Exception as e:
+            print(f"排序失败: {str(e)}")
+
+    def update_header_sort_indicator(self, sorted_column, order):
+        """更新表头显示排序指示器"""
+        header = self.data_table.horizontalHeader()
+        
+        # 清除所有列的排序指示器
+        for col in range(header.count()):
+            header_item = header.model().headerData(col, Qt.Horizontal)
+            if header_item:
+                # 移除之前的排序指示器
+                current_text = str(header_item)
+                if current_text.endswith(' ↑') or current_text.endswith(' ↓'):
+                    current_text = current_text[:-2]
+                header.model().setHeaderData(col, Qt.Horizontal, current_text)
+        
+        # 为当前排序列添加指示器
+        if order is not None:
+            current_header = header.model().headerData(sorted_column, Qt.Horizontal)
+            indicator = ' ↑' if order == 'asc' else ' ↓'
+            new_header = str(current_header) + indicator
+            header.model().setHeaderData(sorted_column, Qt.Horizontal, new_header)
 
     
     def create_menu_bar(self):
@@ -1494,59 +2124,292 @@ class MainWindow(QMainWindow):
     def update_status_bar(self):
         count = self.user_db.get_data_count()
         self.status_bar.showMessage(f'用户: {self.username} | 总记录数: {count}')
-    
+
     def search_data(self):
+        """搜索数据 - 现在调用新的全列搜索方法"""
+        self.search_all_columns()
+
+    def search_data_old(self):
         keyword = self.search_input.text().strip()
         if not keyword:
             self.load_data()
             return
         
         try:
-            data = self.user_db.search_data(keyword)
+            # 使用增强搜索方法
+            data = self.user_db.search_data_enhanced(keyword)
             self.data_table.setRowCount(len(data))
             
-            barcode_col = next((col for col in self.columns_config if col.get('is_barcode', False)), None)
-            qrcode_col = next((col for col in self.columns_config if col.get('is_qrcode', False)), None)
+            # 马卡龙色系交替行颜色
+            colors = [
+                MacaronColors.MINT_GREEN,    # 薄荷绿
+                MacaronColors.SKY_BLUE,      # 天空蓝
+                MacaronColors.LEMON_YELLOW,  # 柠檬黄
+                MacaronColors.LAVENDER,      # 薰衣草紫
+                MacaronColors.PEACH_ORANGE   # 蜜桃橙
+            ]
             
             for row_idx, row_data in enumerate(data):
                 # rowid是第一个元素
                 rowid = row_data[0]
                 row_values = row_data[1:]
                 
+                # 设置交替行背景色
+                color = colors[row_idx % len(colors)]
                 for col_idx, value in enumerate(row_values):
-                    item = QTableWidgetItem(str(value))
-                    item.setData(Qt.UserRole, rowid)  # 保存rowid
-                    self.data_table.setItem(row_idx, col_idx, item)
+                    if col_idx < len(self.columns_config):  # 只处理数据列，不处理条码列
+                        item = QTableWidgetItem(str(value))
+                        item.setData(Qt.UserRole, rowid)  # 保存rowid
+                        
+                        # 设置背景色和文本颜色
+                        item.setBackground(QColor(color))
+                        item.setForeground(QColor('#333333'))  # 深色文字提高可读性
+                        
+                        # 设置对齐方式
+                        item.setTextAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+                        
+                        self.data_table.setItem(row_idx, col_idx, item)
                 
-                # 添加条形码和二维码
+                # 添加条形码
                 col_offset = len(self.columns_config)
-                if barcode_col:
-                    barcode_value = row_values[self.columns_config.index(barcode_col)]
+                barcode_cols = [col for col in self.columns_config if col.get('is_barcode', False)]
+                for col in barcode_cols:
+                    barcode_value = row_values[self.columns_config.index(col)]
                     barcode_img = self.generate_barcode(barcode_value)
                     if barcode_img:
                         label = QLabel()
                         label.setPixmap(QPixmap.fromImage(barcode_img))
                         label.setAlignment(Qt.AlignCenter)
+                        label.setStyleSheet(f"background-color: {color};")
                         self.data_table.setCellWidget(row_idx, col_offset, label)
-                        col_offset += 1
+                    col_offset += 1
                 
-                if qrcode_col:
-                    qrcode_value = row_values[self.columns_config.index(qrcode_col)]
+                # 添加二维码
+                qrcode_cols = [col for col in self.columns_config if col.get('is_qrcode', False)]
+                for col in qrcode_cols:
+                    qrcode_value = row_values[self.columns_config.index(col)]
                     qrcode_img = self.generate_qrcode(qrcode_value)
                     if qrcode_img:
                         label = QLabel()
                         label.setPixmap(QPixmap.fromImage(qrcode_img))
                         label.setAlignment(Qt.AlignCenter)
+                        label.setStyleSheet(f"background-color: {color};")
                         self.data_table.setCellWidget(row_idx, col_offset, label)
+                    col_offset += 1
             
             self.data_table.resizeColumnsToContents()
             self.data_table.resizeRowsToContents()
             
-            self.status_bar.showMessage(f'找到 {len(data)} 条匹配记录')
+            # 显示搜索结果的详细信息
+            from pypinyin import lazy_pinyin, Style
+            pinyin_full = ''.join(lazy_pinyin(keyword))
+            pinyin_initials = ''.join(lazy_pinyin(keyword, style=Style.FIRST_LETTER))
+            
+            search_info = f'找到 {len(data)} 条匹配记录'
+            if pinyin_full and pinyin_full != keyword:
+                search_info += f' (包含拼音: {pinyin_full})'
+            if pinyin_initials and pinyin_initials != keyword:
+                search_info += f' (包含首字母: {pinyin_initials})'
+                
+            self.status_bar.showMessage(search_info)
             
         except Exception as e:
             QMessageBox.critical(self, '错误', f'搜索失败: {str(e)}')
-    
+
+    def search_all_columns(self):
+        """搜索所有列的内容 - 增强版支持拼音"""
+        keyword = self.search_input.text().strip()
+        if not keyword:
+            self.load_data()
+            return
+        
+        try:
+            # 使用增强的全列搜索方法
+            data = self.user_db.search_data_all_columns_enhanced(keyword)
+            self.display_search_results(data, keyword)
+            
+        except Exception as e:
+            QMessageBox.critical(self, '错误', f'搜索失败: {str(e)}')
+
+    def display_search_results(self, data, keyword):
+        """显示搜索结果"""
+        self.data_table.setRowCount(len(data))
+        
+        # 马卡龙色系交替行颜色
+        colors = [
+            MacaronColors.MINT_GREEN,    # 薄荷绿
+            MacaronColors.SKY_BLUE,      # 天空蓝
+            MacaronColors.LEMON_YELLOW,  # 柠檬黄
+            MacaronColors.LAVENDER,      # 薰衣草紫
+            MacaronColors.PEACH_ORANGE   # 蜜桃橙
+        ]
+        
+        for row_idx, row_data in enumerate(data):
+            # rowid是第一个元素
+            rowid = row_data[0]
+            row_values = row_data[1:]
+            
+            # 设置交替行背景色
+            color = colors[row_idx % len(colors)]
+            
+            # 高亮显示匹配的文本
+            for col_idx, value in enumerate(row_values):
+                if col_idx < len(self.columns_config):  # 只处理数据列
+                    display_text = str(value) if value else ""
+                    
+                    # 高亮匹配的关键词
+                    if keyword.lower() in str(value).lower():
+                        display_text = self.highlight_keyword(str(value), keyword)
+                    
+                    item = QTableWidgetItem(display_text)
+                    item.setData(Qt.UserRole, rowid)
+                    
+                    # 设置背景色和文本颜色
+                    item.setBackground(QColor(color))
+                    item.setForeground(QColor('#333333'))
+                    
+                    # 设置对齐方式
+                    item.setTextAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+                    
+                    self.data_table.setItem(row_idx, col_idx, item)
+            
+            # 添加条形码和二维码（与原来相同）
+            self.add_barcode_qrcode_to_table(row_idx, row_values, color)
+        
+        self.data_table.resizeColumnsToContents()
+        self.data_table.resizeRowsToContents()
+        
+        # 更新状态栏
+        self.status_bar.showMessage(f'找到 {len(data)} 条包含 "{keyword}" 的记录')
+
+    def highlight_keyword(self, text, keyword):
+        """在文本中高亮显示关键词"""
+        # 这里可以返回带HTML格式的文本，但QTableWidgetItem不支持HTML
+        # 所以返回原始文本，高亮效果可以在单元格渲染器中实现
+        return text
+
+    def add_barcode_qrcode_to_table(self, row_idx, row_values, color):
+        """为表格行添加条形码和二维码"""
+        col_offset = len(self.columns_config)
+        
+        # 添加条形码
+        barcode_cols = [col for col in self.columns_config if col.get('is_barcode', False)]
+        for col in barcode_cols:
+            barcode_value = row_values[self.columns_config.index(col)]
+            barcode_img = self.generate_barcode(barcode_value)
+            if barcode_img:
+                label = QLabel()
+                label.setPixmap(QPixmap.fromImage(barcode_img))
+                label.setAlignment(Qt.AlignCenter)
+                label.setStyleSheet(f"background-color: {color};")
+                self.data_table.setCellWidget(row_idx, col_offset, label)
+            col_offset += 1
+        
+        # 添加二维码
+        qrcode_cols = [col for col in self.columns_config if col.get('is_qrcode', False)]
+        for col in qrcode_cols:
+            qrcode_value = row_values[self.columns_config.index(col)]
+            qrcode_img = self.generate_qrcode(qrcode_value)
+            if qrcode_img:
+                label = QLabel()
+                label.setPixmap(QPixmap.fromImage(qrcode_img))
+                label.setAlignment(Qt.AlignCenter)
+                label.setStyleSheet(f"background-color: {color};")
+                self.data_table.setCellWidget(row_idx, col_offset, label)
+            col_offset += 1
+
+
+
+    def display_search_results(self, data, keyword):
+        """显示搜索结果"""
+        self.data_table.setRowCount(len(data))
+        
+        # 马卡龙色系交替行颜色
+        colors = [
+            MacaronColors.MINT_GREEN,    # 薄荷绿
+            MacaronColors.SKY_BLUE,      # 天空蓝
+            MacaronColors.LEMON_YELLOW,  # 柠檬黄
+            MacaronColors.LAVENDER,      # 薰衣草紫
+            MacaronColors.PEACH_ORANGE   # 蜜桃橙
+        ]
+        
+        for row_idx, row_data in enumerate(data):
+            # rowid是第一个元素
+            rowid = row_data[0]
+            row_values = row_data[1:]
+            
+            # 设置交替行背景色
+            color = colors[row_idx % len(colors)]
+            
+            # 高亮显示匹配的文本
+            for col_idx, value in enumerate(row_values):
+                if col_idx < len(self.columns_config):  # 只处理数据列
+                    display_text = str(value) if value else ""
+                    
+                    # 高亮匹配的关键词
+                    if keyword.lower() in str(value).lower():
+                        display_text = self.highlight_keyword(str(value), keyword)
+                    
+                    item = QTableWidgetItem(display_text)
+                    item.setData(Qt.UserRole, rowid)
+                    
+                    # 设置背景色和文本颜色
+                    item.setBackground(QColor(color))
+                    item.setForeground(QColor('#333333'))
+                    
+                    # 设置对齐方式
+                    item.setTextAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+                    
+                    self.data_table.setItem(row_idx, col_idx, item)
+            
+            # 添加条形码和二维码（与原来相同）
+            self.add_barcode_qrcode_to_table(row_idx, row_values, color)
+        
+        self.data_table.resizeColumnsToContents()
+        self.data_table.resizeRowsToContents()
+        
+        # 更新状态栏
+        self.status_bar.showMessage(f'找到 {len(data)} 条包含 "{keyword}" 的记录')
+
+    def highlight_keyword(self, text, keyword):
+        """在文本中高亮显示关键词"""
+        # 这里可以返回带HTML格式的文本，但QTableWidgetItem不支持HTML
+        # 所以返回原始文本，高亮效果可以在单元格渲染器中实现
+        return text
+
+    def add_barcode_qrcode_to_table(self, row_idx, row_values, color):
+        """为表格行添加条形码和二维码"""
+        col_offset = len(self.columns_config)
+        
+        # 添加条形码
+        barcode_cols = [col for col in self.columns_config if col.get('is_barcode', False)]
+        for col in barcode_cols:
+            barcode_value = row_values[self.columns_config.index(col)]
+            barcode_img = self.generate_barcode(barcode_value)
+            if barcode_img:
+                label = QLabel()
+                label.setPixmap(QPixmap.fromImage(barcode_img))
+                label.setAlignment(Qt.AlignCenter)
+                label.setStyleSheet(f"background-color: {color};")
+                self.data_table.setCellWidget(row_idx, col_offset, label)
+            col_offset += 1
+        
+        # 添加二维码
+        qrcode_cols = [col for col in self.columns_config if col.get('is_qrcode', False)]
+        for col in qrcode_cols:
+            qrcode_value = row_values[self.columns_config.index(col)]
+            qrcode_img = self.generate_qrcode(qrcode_value)
+            if qrcode_img:
+                label = QLabel()
+                label.setPixmap(QPixmap.fromImage(qrcode_img))
+                label.setAlignment(Qt.AlignCenter)
+                label.setStyleSheet(f"background-color: {color};")
+                self.data_table.setCellWidget(row_idx, col_offset, label)
+            col_offset += 1
+
+
+
+
     def clear_search(self):
         self.search_input.clear()
         self.load_data()
