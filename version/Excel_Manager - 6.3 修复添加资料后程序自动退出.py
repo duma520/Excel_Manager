@@ -41,196 +41,6 @@ def install_package(package):
         return False
 
 
-# ===================== 统一提示（状态栏，不弹窗）★ v6.8 =====================
-# 用户要求：所有提示都改到状态栏，不要弹窗打断操作。
-# 约定：
-#   * 提示类（成功/失败/警告/信息）一律走 notify() → 状态栏；
-#   * 需要用户“是/否”决定的确认框（QMessageBox.question）保留，不能改状态栏；
-#   * 真正需要输入的表单对话框（列配置/编辑数据/选物品等）当然还是对话框；
-#   * notify() 万一找不到状态栏（极少数独立窗口/启动早期）才退回弹窗，信息不会丢。
-NOTIFY_ICONS = {'info': 'ℹ️', 'success': '✅', 'warn': '⚠️', 'error': '❌'}
-NOTIFY_MSEC = {'info': 5000, 'success': 5000, 'warn': 8000, 'error': 12000}
-NOTIFY_COLORS = {'info': '#333333', 'success': '#2E7D32',
-                 'warn': '#E65100', 'error': '#C62828'}
-
-
-def find_status_bar(obj):
-    """沿 parent 链找一个可用的状态栏（QMainWindow.statusBar() 会自动创建）"""
-    seen = set()
-    cur = obj
-    while cur is not None and id(cur) not in seen:
-        seen.add(id(cur))
-        sb = getattr(cur, 'status_bar', None)
-        if sb is None and isinstance(cur, QMainWindow):
-            try:
-                sb = cur.statusBar()
-            except Exception:
-                sb = None
-        if sb is not None:
-            return sb
-        try:
-            cur = cur.parent() if hasattr(cur, 'parent') else None
-        except Exception:
-            cur = None
-    try:
-        win = QApplication.activeWindow()
-    except Exception:
-        win = None
-    if win is not None:
-        sb = getattr(win, 'status_bar', None)
-        if sb is None and isinstance(win, QMainWindow):
-            try:
-                sb = win.statusBar()
-            except Exception:
-                sb = None
-        if sb is not None:
-            return sb
-    return None
-
-
-class NotifyLabel(QLabel):
-    """状态栏右侧的“重要提示”标签（★ v6.8）
-
-    警告/错误写在这里而不是 showMessage 的临时区域 —— 因为程序里有很多地方会
-    用 showMessage 刷常规状态（“正在加载…”“用户: X | 总记录数: N”），临时区域
-    会被它们盖掉、重要提示就看不见了。点一下即可清掉。
-    """
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setCursor(Qt.PointingHandCursor)
-        self.setToolTip('点击可清除此提示')
-
-    def mousePressEvent(self, event):
-        self.setText('')
-        self.setToolTip('')
-        self.hide()
-        super().mousePressEvent(event)
-
-
-def _ensure_notify_label(status_bar):
-    """在状态栏右侧放一个常驻提示标签（每个状态栏一个）"""
-    lbl = getattr(status_bar, '_notify_label', None)
-    if lbl is None:
-        lbl = NotifyLabel(status_bar)
-        status_bar.addPermanentWidget(lbl)
-        status_bar._notify_label = lbl
-    return lbl
-
-
-def _flash_dialog_title(dlg, level, msec):
-    """对话框（模态时状态栏被挡住）用标题闪烁提示一下（★ v6.8）"""
-    try:
-        base = getattr(dlg, '_notify_base_title', None)
-        if base is None:
-            base = dlg.windowTitle()
-            dlg._notify_base_title = base
-        dlg.setWindowTitle(f"{NOTIFY_ICONS.get(level, '')} {base}".strip())
-
-        def _restore():
-            try:
-                if getattr(dlg, '_notify_base_title', None) is not None:
-                    dlg.setWindowTitle(dlg._notify_base_title)
-            except Exception:
-                pass
-
-        QTimer.singleShot(msec or NOTIFY_MSEC.get(level, 5000), _restore)
-    except Exception:
-        pass
-
-
-def _fallback_popup(owner, text, level):
-    """兜底弹窗（★ v6.8）：找不到状态栏时才用。
-
-    两个刻意的设计：
-      1. 用 QMessageBox 的**对象形式**创建，不用 QMessageBox.information/warning/
-         critical 三个静态方法 —— 否则批量改造脚本会把兜底本身也换成 notify()，
-         导致无限递归（v6.8 改造时真的踩到了）；
-      2. 用 show() 而不是 exec()：**绝不阻塞**（阻塞型弹窗正是这次要消灭的东西，
-         而且会让自动化冒烟测试卡死）。
-    """
-    try:
-        icons = {'error': QMessageBox.Critical, 'warn': QMessageBox.Warning,
-                 'info': QMessageBox.Information}
-        titles = {'error': '错误', 'warn': '警告', 'info': '提示'}
-        box = QMessageBox(owner if isinstance(owner, QWidget) else None)
-        box.setIcon(icons.get(level, QMessageBox.Information))
-        box.setWindowTitle(titles.get(level, '提示'))
-        box.setText(str(text))
-        box.setStandardButtons(QMessageBox.Ok)
-        box.setAttribute(Qt.WA_DeleteOnClose)
-        box.show()
-        _ACTIVE_POPUPS.append(box)
-        try:
-            box.destroyed.connect(lambda *_: _ACTIVE_POPUPS.remove(box)
-                                  if box in _ACTIVE_POPUPS else None)
-        except Exception:
-            pass
-    except Exception as e:
-        print(f"[DEBUG] 兜底弹窗失败: {str(e)}")
-
-
-_ACTIVE_POPUPS = []     # 保活：无父对象的兜底弹窗不能被 Python 提前回收
-
-
-def notify(owner, message, level='info', msec=None):
-    """统一提示（★ v6.8）：原先 QMessageBox.information/warning/critical 的弹窗
-    改为状态栏提示，不打断操作。
-
-    level: info / success / warn / error
-      * info/success → 状态栏临时消息（过一会儿自动消失）
-      * warn/error   → 状态栏右侧的常驻提示（不会被常规状态刷新盖掉，点击清除）
-      * 有模态对话框弹着时，顺带闪一下它的标题（不然状态栏被挡住看不见）
-    完整原文放进 tooltip（状态栏只有一行，太长的会截断）。
-    返回 True 表示已写进状态栏，False 表示退回了弹窗（找不到状态栏时的兜底）。
-    """
-    text = str(message)
-    flat = ' '.join(text.split())            # 状态栏只能一行，换行折叠成空格
-    if len(flat) > 300:
-        flat = flat[:300] + '…'
-    icon = NOTIFY_ICONS.get(level, NOTIFY_ICONS['info'])
-    color = NOTIFY_COLORS.get(level, NOTIFY_COLORS['info'])
-    duration = msec or NOTIFY_MSEC.get(level, 5000)
-
-    sb = find_status_bar(owner)
-    if sb is None:
-        # 兜底：真找不到状态栏就仍然弹窗（保证错误信息不会丢）
-        print(f"[NOTIFY:{level}] {flat}")
-        _fallback_popup(owner, text, level)
-        return False
-
-    try:
-        if level in ('warn', 'error'):
-            print(f"[{level.upper()}] {flat}")
-            lbl = _ensure_notify_label(sb)
-            lbl.setText(f"{icon} {flat}")
-            lbl.setStyleSheet(f"color: {color};")
-            lbl.setToolTip(text)
-            lbl.show()
-        else:
-            lbl = getattr(sb, '_notify_label', None)
-            if lbl is not None:
-                lbl.setText('')
-                lbl.setToolTip('')
-                lbl.hide()
-            sb.setStyleSheet(f"color: {color};")
-            sb.showMessage(f"{icon} {flat}", duration)
-            sb.setToolTip(text)
-    except Exception as e:
-        print(f"[DEBUG] 状态栏提示失败: {str(e)}")
-        return False
-
-    # 模态对话框挡着状态栏时，闪一下它的标题
-    try:
-        cur = owner
-        while cur is not None and not isinstance(cur, QDialog):
-            cur = cur.parent() if hasattr(cur, 'parent') else None
-        if cur is not None:
-            _flash_dialog_title(cur, level, duration)
-    except Exception:
-        pass
-    return True
-
 
 # ===================== 多线程工作器 =====================
 class WorkerSignals(QObject):
@@ -260,18 +70,10 @@ class BaseWorker(QRunnable):
         try:
             result = self.fn(*self.args, **self.kwargs)
             if not self._is_cancelled:
-                # ★ v6.4：信号宿主可能已被回收（线程池任务未保留引用时），
-                #   不捕住会抛 RuntimeError: Signal source has been deleted
-                try:
-                    self.signals.finished.emit(result)
-                except RuntimeError:
-                    pass
+                self.signals.finished.emit(result)
         except Exception as e:
             if not self._is_cancelled:
-                try:
-                    self.signals.error.emit(str(e))
-                except RuntimeError:
-                    print(f"[DEBUG] 线程池任务异常（信号已失效）: {str(e)}")
+                self.signals.error.emit(str(e))
 
 
 class ThreadedWorker(QThread):
@@ -463,8 +265,8 @@ class BarcodeGenerator(BaseWorker):
 
 class ProjectInfo:
     """项目信息元数据（集中管理所有项目相关信息）"""
-    VERSION = "6.8"
-    BUILD_DATE = "2026-09-24"
+    VERSION = "6.3"
+    BUILD_DATE = "2026-09-23"
     AUTHOR = "杜玛"
     LICENSE = "GNU Affero General Public License v3.0"
     COPYRIGHT = "© 永久 杜玛"
@@ -495,12 +297,7 @@ class ProjectInfo:
         "6.0": "版本升级至 6.0，持续优化性能与稳定性。",
         "6.1": "新增全局设置实时自动保存+持久化：窗口几何/最大化、上次登录用户、统一导入配置均保存至 excel_manager_settings.json，下次启动自动沿用。",
         "6.2": "修复三处已知问题：①install_package 引用未导入 subprocess 且定义在调用之后；②重复数据清理对话框 selected_fields 作用域错误；③HELP_TEXT 死代码接入『帮助→使用说明』。",
-        "6.3": "修复『添加资料点确定后程序自动退出』：①统计/详情面板清空布局改用 takeAt+deleteLater（原 setParent(None) 会在布局里留下悬空指针、踩坏堆内存）；②QThread 工作线程生命周期加固（取消+保活+延迟释放，避免 QThread 在线程未结束时被析构而 qFatal 退出）；③工作线程改用独立数据库连接，不再与主线程共用 sqlite3 Cursor；退出前等待所有线程结束。",
-        "6.4": "①添加数据成功后不再弹窗，改为状态栏提示；②「修改列配置」不再重建（清空）数据库，改为迁移表结构：新增/删除/改类型列、按中文名自动识别改名列，已有数据全部保留，改前自动备份；③修复多列『唯一/必填』时写配置主键冲突（INSERT OR REPLACE + JSON 列表存储），并支持多列唯一/必填。",
-        "6.5": "登录后也能修改列配置：主窗口「工具→🧩修改列配置」与「🛠️用户设置」窗口里的按钮均可修改当前用户列配置（与登录窗口入口共用同一套「备份+迁移表结构+保存配置」流程，数据保留），改完自动刷新表头/统计/详情。",
-        "6.6": "添加数据后自动翻到最新行：新记录添加成功并刷新列表后，表格自动滚动到最后一行（最新记录）并选中它，无需再手动往下拖；仅「添加数据」触发，刷新/搜索/导入等其它刷新不受影响。",
-        "6.7": "修复「增加列后全是 None、还以为数据没了，重开后添加不了数据」：①列配置改以数据库真实表结构为准（启动、录入前、打开列配置前自动校正，并把 users.settings 回写一致），不再因“设置与表结构分裂”而显示错位或报 table data has no column named xxx；②修改列配置的迁移不再静默清空 —— 旧版“一列都对不上就只保留记录条数”会把整表值清成 NULL（实测丢过 70 条），现改为位置兜底保住数据、真对不上就直接中止；③迁移后核对表结构是否真等于新配置；④确认框直接列出「保留数据的列/新增列/会被删除的列」；⑤表格取值改按列名、NULL 显示为空串（不再显示 None）；⑥列配置对话框不允许删到最后一列、新列默认名不再重复。",
-        "6.8": "按用户要求把所有提示改到状态栏（不弹窗打断）：全文件 146 处 QMessageBox.information/warning/critical 统一改为 notify() —— 成功/信息走状态栏临时消息，警告/错误走状态栏右侧常驻提示（不会被常规状态刷新盖掉，点击可清除，完整原文在 tooltip，并按级别用绿/橙/红色）；弹着对话框时顺带闪一下标题；实在找不到状态栏才退回**非阻塞**弹窗。需要用户「是/否」决定的确认框（QMessageBox.question，删除/覆盖/退出等 11 处）仍然保留。"
+        "6.3": "修复『添加资料点确定后程序自动退出』：①统计/详情面板清空布局改用 takeAt+deleteLater（原 setParent(None) 会在布局里留下悬空指针、踩坏堆内存）；②QThread 工作线程生命周期加固（取消+保活+延迟释放，避免 QThread 在线程未结束时被析构而 qFatal 退出）；③工作线程改用独立数据库连接，不再与主线程共用 sqlite3 Cursor；退出前等待所有线程结束。"
     }
     HELP_TEXT = """
 数据管理系统使用说明
@@ -856,206 +653,33 @@ class UserDatabase:
                 value TEXT
             )
         ''')
-
-        self._save_columns_config_to_db(columns_config)
-        self.conn.commit()
-
-    def _save_columns_config_to_db(self, columns_config):
-        """把列配置（标签/条码/二维码/唯一/必填）写进 config 表
-
-        ★ v6.4：
-          * 一律用 INSERT OR REPLACE —— 原来用 INSERT，一旦有 2 列以上勾选
-            「唯一」或「必填」就会因 key 主键冲突报 IntegrityError；
-          * 唯一/必填改为 JSON 列表（unique_columns / required_columns）存储，
-            支持多列；旧的单值键 unique_column / required_column 会被清理；
-          * 顺手清掉已删除列残留的标签/条码/二维码键。
-        """
-        keep_label_keys = set()
-        keep_flag_keys = set()
+        
         for col in columns_config:
-            name = col['name']
-            keep_label_keys.add(f"col_{name}_label")
-            self.cursor.execute('INSERT OR REPLACE INTO config VALUES (?, ?)',
-                                (f"col_{name}_label", col.get('label', name)))
-            for flag, prefix in (('is_barcode', 'barcode_column_'), ('is_qrcode', 'qrcode_column_')):
-                key = f"{prefix}{name}"
-                keep_flag_keys.add(key)
-                if col.get(flag, False):
-                    self.cursor.execute('INSERT OR REPLACE INTO config VALUES (?, ?)', (key, "1"))
-                else:
-                    self.cursor.execute('DELETE FROM config WHERE key=?', (key,))
-
-        unique_names = [c['name'] for c in columns_config if c.get('is_unique', False)]
-        required_names = [c['name'] for c in columns_config if c.get('is_required', False)]
-        self.cursor.execute('INSERT OR REPLACE INTO config VALUES (?, ?)',
-                            ('unique_columns', json.dumps(unique_names, ensure_ascii=False)))
-        self.cursor.execute('INSERT OR REPLACE INTO config VALUES (?, ?)',
-                            ('required_columns', json.dumps(required_names, ensure_ascii=False)))
-        self.cursor.execute("DELETE FROM config WHERE key IN ('unique_column','required_column')")
-
-        # 清理已删除列的残留配置键
-        self.cursor.execute('SELECT key FROM config')
-        for (key,) in self.cursor.fetchall():
-            if key.startswith('col_') and key.endswith('_label') and key not in keep_label_keys:
-                self.cursor.execute('DELETE FROM config WHERE key=?', (key,))
-            elif key.startswith(('barcode_column_', 'qrcode_column_')) and key not in keep_flag_keys:
-                self.cursor.execute('DELETE FROM config WHERE key=?', (key,))
-
-    def migrate_column_config(self, new_columns_config):
-        """按新的列配置**迁移**表结构，尽量保留已有数据（★ v6.4）
-
-        与 initialize_database() 的区别：不再 DROP 整张表，因此在
-        「登录窗口 →修改列配置」时不会再把用户数据清空。
-
-        规则：
-          * 列名相同 → 直接沿用；
-          * 列名变了但中文名(label)没变 → 视为重命名，自动改名并保留数据；
-          * 新列 → 建列，旧行该列为空；
-          * 删掉列 → 只丢这一列的数据；
-          * 列类型变化 → 按新类型重建（SQLite 只能重建表才能改类型）。
-
-        返回 (是否成功, 说明文字)
-        """
-        new_columns_config = [c for c in (new_columns_config or []) if c.get('name')]
-        if not new_columns_config:
-            return False, '列配置为空'
-
-        # 表不存在：等同新建
-        self.cursor.execute('SELECT name FROM sqlite_master WHERE type="table" AND name="data"')
-        if not self.cursor.fetchone():
-            self.initialize_database(new_columns_config)
-            return True, '已按新配置创建数据表'
-
-        # ---- 1. 读旧表结构与旧中文名 ----
-        self.cursor.execute('PRAGMA table_info(data)')
-        old_names = [row[1] for row in self.cursor.fetchall()]
-        old_labels = {}
-        self.cursor.execute('SELECT key, value FROM config WHERE key LIKE "col_%_label"')
-        for key, value in self.cursor.fetchall():
-            old_labels[key[4:-6]] = value          # col_<name>_label
-
-        # ---- 2. 逐个新列决定数据来源（与「修改列配置」确认框的预演共用同一套逻辑）----
-        mapping, renamed, added, removed = plan_column_migration(
-            old_names, old_labels, new_columns_config)
-        carried = [c['name'] for c in new_columns_config
-                   if mapping.get(c['name']) and mapping[c['name']] in old_names]
-
-        # ★ v6.7 关键防护：一列都对不上时【直接中止】，绝不把已有数据清成 NULL。
-        #   旧实现走“只保留记录条数”的兜底，结果整表数据全变 NULL（用户会以为数据
-        #   没了）—— 实测就这样丢过一次（定位器ID 的 70 条）。这里在任何 DDL 之前返回。
-        self.cursor.execute('SELECT COUNT(*) FROM data')
-        rowcount = self.cursor.fetchone()[0]
-        if rowcount > 0 and not carried:
-            return False, ('新列配置与现有表结构完全不匹配（列名与中文名都不一样），'
-                           f'为避免清空已有 {rowcount} 条数据已中止；'
-                           '请至少保留一个原有列的「列名」或「中文名」。')
-
-        # ---- 3. 重命名列（能让旧数据原封不动地挂到新列名上）----
-        for new_name, old_name in renamed.items():
-            try:
-                self.cursor.execute(
-                    f'ALTER TABLE data RENAME COLUMN {self.quote_identifier(old_name)} '
-                    f'TO {self.quote_identifier(new_name)}')
-                # 改名成功后，旧列已经“就叫新名字”了，后续搬迁直接用新名
-                mapping[new_name] = new_name
-            except Exception as e:
-                print(f"[DEBUG] 重命名列失败 {old_name}->{new_name}: {str(e)}")
-                mapping[new_name] = None
-                added.append(new_name)
-        self.cursor.execute('PRAGMA table_info(data)')
-        old_names = [row[1] for row in self.cursor.fetchall()]
-
-        # ---- 4. 重建表并把旧数据搬过去 ----
-        cols_sql = []
-        for col in new_columns_config:
-            col_type = 'TEXT' if col.get('type') == 'EAN13' else col.get('type', 'TEXT')
-            cols_sql.append(f"{self.quote_identifier(col['name'])} {col_type}")
-        self.cursor.execute('DROP TABLE IF EXISTS data__migrate')
-        self.cursor.execute(f"CREATE TABLE data__migrate ({', '.join(cols_sql)})")
-
-        if carried:
-            new_clause = ', '.join(self.quote_identifier(n) for n in carried)
-            old_clause = ', '.join(self.quote_identifier(mapping[n]) for n in carried)
-            # 连 rowid 一起搬，保证记录标识不变
-            self.cursor.execute(
-                f"INSERT INTO data__migrate (rowid, {new_clause}) "
-                f"SELECT rowid, {old_clause} FROM data")
-        else:
-            # ★ v6.7：正常已被土面的防护拦住（会直接 return False）。这里仅作最后兼底：
-            #   保留记录条数，但绝不静默 —— 打日志 + 在返回说明里写明。
-            print(f"[DEBUG] 迁移时没有任何列可搬（旧列={old_names}），"
-                  f"仅保留 {rowcount} 条记录条数")
-            for _ in range(rowcount):
-                self.cursor.execute('INSERT INTO data__migrate DEFAULT VALUES')
-
-        self.cursor.execute('DROP TABLE data')
-        self.cursor.execute('ALTER TABLE data__migrate RENAME TO data')
-
-        # ---- 5. 重写列配置 / 补拼音列 / 重建索引 ----
-        self._save_columns_config_to_db(new_columns_config)
-        # 拼音开关以库里的 config 为准（private 连接不会走 _init_pinyin_columns，
-        # 否则重建表后拼音列不会补回来，拼音搜索会失效）
-        pinyin_on = bool(getattr(self, 'pinyin_enabled', False))
-        try:
-            self.cursor.execute("SELECT value FROM config WHERE key='pinyin_enabled'")
-            row = self.cursor.fetchone()
-            if row is not None:
-                pinyin_on = (row[0] == '1')
-        except Exception as e:
-            print(f"[DEBUG] 读取拼音开关失败: {str(e)}")
-        if pinyin_on:
-            try:
-                self._enable_pinyin_system()
-            except Exception as e:
-                print(f"[DEBUG] 重建拼音列失败: {str(e)}")
-        self._safe_create_indexes()
+            self.cursor.execute('INSERT INTO config VALUES (?, ?)', 
+                              (f"col_{col['name']}_label", col['label']))
+            if col.get('is_barcode', False):
+                self.cursor.execute('INSERT INTO config VALUES (?, ?)', 
+                                  (f"barcode_column_{col['name']}", "1"))
+            if col.get('is_qrcode', False):
+                self.cursor.execute('INSERT INTO config VALUES (?, ?)', 
+                                  (f"qrcode_column_{col['name']}", "1"))
+            if col.get('is_unique', False):
+                self.cursor.execute('INSERT INTO config VALUES (?, ?)', 
+                                  ('unique_column', col['name']))
+            if col.get('is_required', False):
+                self.cursor.execute('INSERT INTO config VALUES (?, ?)', 
+                                  ('required_column', col['name']))
+        
         self.conn.commit()
-
-        detail = []
-        if added:
-            detail.append(f"新增列 {len(added)} 个")
-        if renamed:
-            detail.append(f"重命名 {len(renamed)} 个")
-        if removed:
-            detail.append(f"删除列 {len(removed)} 个（其数据已丢弃）")
-        if rowcount and not carried:
-            detail.append('⚠️ 没有任何列能与原表对应，各列数据已清空（仅保留了记录条数）')
-        msg = f'已有 {rowcount} 条数据已保留'
-        if detail:
-            msg += '；' + '，'.join(detail)
-        return True, msg
     
     def get_columns_config(self):
         self.cursor.execute('SELECT key, value FROM config WHERE key LIKE "col_%"')
         config = {}
         for key, value in self.cursor.fetchall():
             config[key] = value
-
-        # ★ v6.7：这里**不再**在 config 表为空时 return None。
-        #   列配置必须始终以 data 表的真实结构为准（名字来自 table_info），
-        #   否则“users.settings 中的列”与“表里的列”一旦不一致，就会显示错位、
-        #   添加数据报 table data has no column named xxx。
-
-        # ★ v6.4：唯一/必填支持多列（JSON 列表），并兼容旧的单值键
-        unique_names, required_names = set(), set()
-        try:
-            self.cursor.execute('SELECT key, value FROM config WHERE key IN '
-                                '("unique_columns","required_columns","unique_column","required_column")')
-            for key, value in self.cursor.fetchall():
-                if not value:
-                    continue
-                if key == 'unique_column':
-                    unique_names.add(value)
-                elif key == 'required_column':
-                    required_names.add(value)
-                else:
-                    try:
-                        names = json.loads(value)
-                    except Exception:
-                        names = [value]
-                    (unique_names if key == 'unique_columns' else required_names).update(names or [])
-        except Exception as e:
-            print(f"[DEBUG] 读取唯一/必填配置失败: {str(e)}")
+        
+        if not config:
+            return None
         
         self.cursor.execute('PRAGMA table_info(data)')
         columns = [row[1] for row in self.cursor.fetchall()]
@@ -1079,10 +703,16 @@ class UserDatabase:
                 col_config['is_qrcode'] = True
             
             # 检查是否是唯一列
-            col_config['is_unique'] = col in unique_names
+            self.cursor.execute('SELECT value FROM config WHERE key="unique_column"')
+            result = self.cursor.fetchone()
+            if result and result[0] == col:
+                col_config['is_unique'] = True
             
             # 检查是否是必填列
-            col_config['is_required'] = col in required_names
+            self.cursor.execute('SELECT value FROM config WHERE key="required_column"')
+            result = self.cursor.fetchone()
+            if result and result[0] == col:
+                col_config['is_required'] = True
             
             # 获取列类型
             self.cursor.execute('PRAGMA table_info(data)')
@@ -1094,44 +724,6 @@ class UserDatabase:
             columns_config.append(col_config)
         
         return columns_config
-
-    def get_table_columns(self):
-        """返回 data 表的真实列名（不含拼音列）（★ v6.7）"""
-        try:
-            self.cursor.execute('PRAGMA table_info(data)')
-            return [row[1] for row in self.cursor.fetchall()
-                    if not row[1].endswith('_pinyin')]
-        except Exception as e:
-            print(f"[DEBUG] 读取表结构失败: {str(e)}")
-            return []
-
-    def get_column_labels(self):
-        """返回 {列名: 中文名}（★ v6.7）"""
-        labels = {}
-        try:
-            self.cursor.execute('SELECT key, value FROM config WHERE key LIKE "col_%_label"')
-            for key, value in self.cursor.fetchall():
-                labels[key[4:-6]] = value          # col_<name>_label
-        except Exception as e:
-            print(f"[DEBUG] 读取列中文名失败: {str(e)}")
-        return labels
-
-    def column_migration_preview(self, new_columns_config):
-        """预演「修改列配置」的影响（★ v6.7）
-
-        返回 (keep, added, removed)：
-          keep    = ['旧列→新列' 或 '列名']，这些列的数据会保留
-          added   = ['新列']，旧表里没有可对应的列
-          removed = ['旧列']，新配置里不再有，其数据会丢
-        """
-        mapping, renamed, added, removed = plan_column_migration(
-            self.get_table_columns(), self.get_column_labels(), new_columns_config)
-        keep = []
-        for name, old in mapping.items():
-            if not old:
-                continue
-            keep.append(f"{old}→{name}" if old != name else name)
-        return keep, added, removed
 
     def _init_pinyin_columns(self):
         """初始化拼音字段系统"""
@@ -1170,9 +762,6 @@ class UserDatabase:
             
             for col in columns:
                 pinyin_col = f"{col}_pinyin"
-                # ★ v6.4：拼音列本身不再派生拼音列（否则会生成 xxx_pinyin_pinyin 之类垃圾列）
-                if col.endswith('_pinyin'):
-                    continue
                 # 检查是否已存在拼音列
                 self.cursor.execute(f"PRAGMA table_info(data)")
                 existing_columns = [row[1] for row in self.cursor.fetchall()]
@@ -1882,172 +1471,6 @@ class DatabaseConnectionManager:
         cls._connections.clear()
 
 
-def plan_column_migration(old_names, old_labels, new_columns_config):
-    """算出「新列配置」与「旧表列」的对应关系（★ v6.7）
-
-    迁移与「修改列配置」确认框的预演共用本函数，避免两处逻辑不一致。
-
-    匹配顺序（越靠前越可靠）：
-      1. 列名完全相同 → 直接沿用；
-      2. 列名变了但中文名(label)没变 → 视为重命名，数据跟着走；
-      3. 位置兜底：**仅当前两轮一列都没配上时**才启用（即用户把列名和中文名一起
-         换掉了）。此时按“同位置”配对，仍能保住数据，而不是把整表清成 NULL。
-         如果已经有列配上了（说明用户是保留了部分列、另外新增），那就不再做位置
-         兜底 —— 否则会把“被删列”的旧值串到“新增列”里。
-
-    返回 (mapping, renamed, added, removed)
-      mapping : {新列名: 旧列名|None}
-      renamed : {新列名: 旧列名}（只含真的改了名的）
-      added   : [新列名]（旧表里没有可对应的，确属新增）
-      removed : [旧列名]（新配置里不再有，其数据会被丢弃）
-    """
-    old_data = [n for n in (old_names or []) if not n.endswith('_pinyin')]
-    new_columns_config = [c for c in (new_columns_config or []) if c.get('name')]
-    old_labels = old_labels or {}
-
-    used = set()        # 已被占用的旧列
-    paired = set()      # 已配上旧列的新列
-    # 先给每个新列留一个 None（=新增列），后面配上旧列再覆盖
-    mapping = {c['name']: None for c in new_columns_config}
-
-    # 1) 列名相同
-    for col in new_columns_config:
-        name = col['name']
-        if name in old_data:
-            mapping[name] = name
-            paired.add(name)
-            used.add(name)
-
-    # 2) 中文名相同 → 改名
-    for col in new_columns_config:
-        name = col['name']
-        if name in paired:
-            continue
-        label = (col.get('label') or '').strip()
-        if not label:
-            continue
-        for old in old_data:
-            if old in used:
-                continue
-            if old_labels.get(old) == label:
-                mapping[name] = old
-                paired.add(name)
-                used.add(old)
-                break
-
-    # 3) 位置兜底：只在前两轮一列都没配上时才做（用户把列名+中文名都换了的情况）。
-    #    否则会把被删列的旧值串到新增列上（实测：新增 stock 会拿到被删 note 的值）。
-    if not paired:
-        for idx, col in enumerate(new_columns_config):
-            name = col['name']
-            if idx < len(old_data):
-                old = old_data[idx]
-                if old not in used:
-                    mapping[name] = old
-                    paired.add(name)
-                    used.add(old)
-
-    renamed = {n: o for n, o in mapping.items() if o and o != n}
-    added = [n for n, o in mapping.items() if not o]
-    removed = [o for o in old_data if o not in used]
-    return mapping, renamed, added, removed
-
-
-def duplicate_column_names(columns_config):
-    """返回重复的列名（★ v6.7：重名列会导致建表失败/数据串列）"""
-    seen, dup = set(), []
-    for col in (columns_config or []):
-        name = (col.get('name') or '').strip()
-        if not name:
-            continue
-        if name in seen and name not in dup:
-            dup.append(name)
-        seen.add(name)
-    return dup
-
-
-def column_config_change_preview(db_file, new_columns_config):
-    """生成「修改列配置」确认框里的影响说明（★ v6.7）
-
-    把这些信息直接写出来，用户就不会在“明明只是加一列”时把整表数据换掉。
-    """
-    if not db_file or not os.path.exists(db_file):
-        return ''
-    db = None
-    try:
-        db = UserDatabase(db_file, private=True)
-        keep, added, removed = db.column_migration_preview(new_columns_config)
-    except Exception as e:
-        print(f"[DEBUG] 预演列配置变更失败: {str(e)}")
-        return ''
-    finally:
-        if db is not None:
-            try:
-                db.close()
-            except Exception:
-                pass
-    return ('\n\n本次对已有数据的影响：\n'
-            f'  • 保留数据的列：{"、".join(keep) if keep else "（无）"}\n'
-            f'  • 新增列（历史记录为空）：{"、".join(added) if added else "（无）"}\n'
-            f'  • 删除列（这些列的数据会丢）：{"、".join(removed) if removed else "（无）"}')
-
-
-def apply_column_config_migration(db_file, username, user_manager, new_columns_config):
-    """修改列配置的公共流程：备份 → 迁移表结构（保留数据）→ 保存用户配置
-
-    ★ v6.5：登录窗口（选用户）与主窗口（当前用户）共用本函数，保证两边
-    行为一致、都不会再清空数据。
-
-    返回 (是否成功, 说明文字)
-    """
-    if not db_file:
-        return False, '无法获取数据库文件'
-    if not new_columns_config:
-        return False, '列配置为空'
-
-    try:
-        # ★ v6.5 关键：必须用 private=True 的【独立连接】！
-        #   否则 UserDatabase(db_file) 拿到的是连接池里与主窗口同一个连接对象，
-        #   下面 close() 会把主窗口正在用的连接一并关掉，
-        #   紧接着就报 sqlite3.ProgrammingError: Cannot operate on a closed database。
-        user_db = UserDatabase(db_file, private=True)
-        try:
-            # 先备份，万一迁移不理想还能找回
-            try:
-                user_db.backup_database(backup_type="manual")
-            except Exception as e:
-                print(f"[DEBUG] 修改列配置前备份失败: {str(e)}")
-
-            # 迁移表结构（不再 DROP 表，数据保留）
-            ok, msg = user_db.migrate_column_config(new_columns_config)
-            if ok:
-                # ★ v6.7：迁移后核对「真实表结构 == 新配置」。
-                #   否则会出现“配置改了、表没改”的分裂状态：表格显示错位，
-                #   添加数据报 table data has no column named xxx（实测踩过）。
-                real = list(user_db.get_table_columns() or [])
-                want = [c['name'] for c in new_columns_config]
-                if real != want:
-                    ok = False
-                    msg = (f'表结构未按新配置更新（实际：{"、".join(real) or "无"}；'
-                           f'期望：{"、".join(want)}）')
-        finally:
-            user_db.close()
-    except Exception as e:
-        return False, f'迁移失败: {str(e)}'
-
-    if not ok:
-        return False, msg
-
-    try:
-        settings = json.dumps(new_columns_config, ensure_ascii=False)
-        if not user_manager.update_user_settings(username, settings):
-            return False, f'{msg}；但保存用户配置失败'
-    except Exception as e:
-        return False, f'{msg}；但保存用户配置失败: {str(e)}'
-
-    return True, msg
-
-
 class FastImportDialog(QDialog):
     def __init__(self, filename, parent=None):
         super().__init__(parent)
@@ -2231,7 +1654,7 @@ class FastImportDialog(QDialog):
             print(f"[DEBUG] 读取到的源文件字段: {source_fields}")   
             if not source_fields:
                 print("[DEBUG] 无法读取源文件字段信息")
-                notify(self, '无法读取源文件的字段信息', 'warn')
+                QMessageBox.warning(self, '警告', '无法读取源文件的字段信息')
                 return
             
             # 获取目标数据库字段
@@ -2306,7 +1729,7 @@ class FastImportDialog(QDialog):
             
         except Exception as e:
             print(f"[DEBUG] 加载字段映射失败: {str(e)}")
-            notify(self, f'加载字段映射失败: {str(e)}', 'warn')
+            QMessageBox.warning(self, '错误', f'加载字段映射失败: {str(e)}')
     
     def get_source_fields(self):
         """获取源文件字段"""
@@ -2564,7 +1987,7 @@ class FastImportDialog(QDialog):
             data = self.parent().read_import_file(self.filename, import_config)
             
             if not data:
-                notify(self, '没有找到可预览的数据', 'info')
+                QMessageBox.information(self, '预览', '没有找到可预览的数据')
                 return
             
             preview_count = min(self.preview_rows_spin.value(), len(data))
@@ -2650,7 +2073,7 @@ class FastImportDialog(QDialog):
             dialog.exec()
             
         except Exception as e:
-            notify(self, f'数据预览失败: {str(e)}', 'error')
+            QMessageBox.critical(self, '预览错误', f'数据预览失败: {str(e)}')
 
     def check_data_quality(self, data):
         """检查数据质量"""
@@ -2726,10 +2149,10 @@ class FastImportDialog(QDialog):
                 with open(filename, 'w', encoding='utf-8') as f:
                     json.dump(data, f, indent=2, ensure_ascii=False)
             
-            notify(self, f'预览数据已导出到: {filename}', 'info')
+            QMessageBox.information(self, '成功', f'预览数据已导出到: {filename}')
             
         except Exception as e:
-            notify(self, f'导出失败: {str(e)}', 'error')
+            QMessageBox.critical(self, '导出错误', f'导出失败: {str(e)}')
 
     def validate_and_accept(self):
         """验证配置并接受"""
@@ -2740,7 +2163,7 @@ class FastImportDialog(QDialog):
             msg = "以下必填字段未映射:\n\n" + "\n".join(missing_required)
             msg += "\n\n是否继续导入？未映射的必填字段将导致数据插入失败。"
             
-            reply = QMessageBox.question(
+            reply = QMessageBox.warning(
                 self, '必填字段警告', msg,
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No
@@ -2751,7 +2174,7 @@ class FastImportDialog(QDialog):
         
         # 检查是否有任何字段被映射
         if not self.has_any_mapping():
-            notify(self, '请至少映射一个字段', 'warn')
+            QMessageBox.warning(self, '警告', '请至少映射一个字段')
             return
         
         # 确认导入
@@ -3025,12 +2448,12 @@ class UltraFastImportDialog(FastImportDialog):
                     pass
             
             
-            notify(self, '统一配置已保存！\n配置时间: ' + self.unified_config['saved_time'], 'info')
+            QMessageBox.information(self, '成功', '统一配置已保存！\n配置时间: ' + self.unified_config['saved_time'])
             print(f"[DEBUG] 统一配置已保存: {self.unified_config}")
             
         except Exception as e:
             print(f"[DEBUG] 保存统一配置失败: {str(e)}")
-            notify(self, f'保存配置失败: {str(e)}', 'warn')
+            QMessageBox.warning(self, '错误', f'保存配置失败: {str(e)}')
 
             
     def load_unified_config(self):
@@ -3038,7 +2461,7 @@ class UltraFastImportDialog(FastImportDialog):
         print("[DEBUG] 加载统一配置")
         if not self.unified_config:
             print("[DEBUG] 无统一配置可加载")
-            notify(self, '暂无保存的统一配置', 'info')
+            QMessageBox.information(self, '提示', '暂无保存的统一配置')
             return
         
         try:
@@ -3075,10 +2498,10 @@ class UltraFastImportDialog(FastImportDialog):
             if 'field_mapping' in self.unified_config:
                 self.apply_field_mapping(self.unified_config['field_mapping'])
             
-            notify(self, f'统一配置已加载！\n配置时间: {self.unified_config.get("saved_time", "未知")}', 'info')
+            QMessageBox.information(self, '成功', f'统一配置已加载！\n配置时间: {self.unified_config.get("saved_time", "未知")}')
             
         except Exception as e:
-            notify(self, f'加载配置失败: {str(e)}', 'warn')
+            QMessageBox.warning(self, '错误', f'加载配置失败: {str(e)}')
 
     def apply_field_mapping(self, field_mapping):
         """应用字段映射配置"""
@@ -3343,7 +2766,7 @@ class LoginWindow(QMainWindow):
         """修改用户名"""
         selected_items = self.user_list.selectedItems()
         if not selected_items:
-            notify(self, '请选择一个用户', 'warn')
+            QMessageBox.warning(self, '警告', '请选择一个用户')
             return
         
         old_username = selected_items[0].text()
@@ -3357,59 +2780,50 @@ class LoginWindow(QMainWindow):
             return
             
         if new_username == old_username:
-            notify(self, '新用户名不能与原用户名相同', 'warn')
+            QMessageBox.warning(self, '警告', '新用户名不能与原用户名相同')
             return
             
         # 调用UserManager更新用户名
         success, message = self.user_manager.update_username(old_username, new_username)
         if success:
-            notify(self, message, 'info')
+            QMessageBox.information(self, '成功', message)
             self.load_users()  # 刷新用户列表
         else:
-            notify(self, message, 'warn')
+            QMessageBox.warning(self, '警告', message)
 
     def modify_column_config(self):
         """修改用户的列配置"""
         selected_items = self.user_list.selectedItems()
         if not selected_items:
-            notify(self, '请选择一个用户', 'warn')
+            QMessageBox.warning(self, '警告', '请选择一个用户')
             return
         
         username = selected_items[0].text()
         
         # 获取当前用户的配置
         settings = self.user_manager.get_user_settings(username)
-        current_config = []
-        if settings:
-            try:
-                current_config = json.loads(settings)
-            except Exception:
-                current_config = []
-        if not current_config:
-            # ★ v6.7：settings 拿不到就按数据库真实表结构预填。
-            #   以前会直接弹一个空白对话框 —— 用户一填就相当于换了整张表（数据全清）。
-            db_file0 = self.user_manager.get_user_db_file(username)
-            if db_file0 and os.path.exists(db_file0):
-                _db = None
-                try:
-                    _db = UserDatabase(db_file0, private=True)
-                    current_config = _db.get_columns_config() or []
-                except Exception as e:
-                    print(f"[DEBUG] 读取真实列配置失败: {str(e)}")
-                    current_config = []
-                finally:
-                    if _db is not None:
-                        try:
-                            _db.close()
-                        except Exception:
-                            pass
-        if not current_config:
-            notify(self, '无法获取用户配置', 'warn')
+        if not settings:
+            QMessageBox.warning(self, '警告', '无法获取用户配置')
             return
-
-        # ★ v6.4：不再重建数据库，改为迁移表结构（尽量保留已有数据）
-        # ★ v6.7：确认框移到对话框之后 —— 先让用户改完，再拿“真实的新配置 vs 现表”
-        #   的影响预览去确认，免得用户在没看清影响的情况下就换掉整表。
+        
+        try:
+            current_config = json.loads(settings)
+        except:
+            QMessageBox.warning(self, '警告', '用户配置格式错误')
+            return
+        
+        # 警告用户这将重建数据库
+        reply = QMessageBox.warning(
+            self, '重要提示',
+            f'修改列配置将重建用户 "{username}" 的数据库，所有现有数据将会丢失！\n\n'
+            '确定要继续吗？',
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.No:
+            return
+        
         # 显示列配置对话框，预填充当前配置
         col_dialog = ColumnConfigDialog()
         col_dialog.load_existing_config(current_config)
@@ -3417,45 +2831,30 @@ class LoginWindow(QMainWindow):
         if col_dialog.exec() == QDialog.Accepted:
             new_columns_config = col_dialog.get_columns_config()
             if not new_columns_config:
-                notify(self, '必须至少配置一列', 'warn')
-                return
-
-            dup = duplicate_column_names(new_columns_config)
-            if dup:
-                notify(self, f'列名重复：{"、".join(dup)}\n请先改成不同的列名', 'warn')
+                QMessageBox.warning(self, '警告', '必须至少配置一列')
                 return
             
+            # 重建数据库
             db_file = self.user_manager.get_user_db_file(username)
             if not db_file:
-                notify(self, '无法获取数据库文件', 'warn')
-                return
-
-            preview = column_config_change_preview(db_file, new_columns_config)
-            reply = QMessageBox.question(
-                self, '确认列配置变更',
-                f'即将修改用户 "{username}" 的列配置：\n\n'
-                '  • 新增列：已有记录该列为空\n'
-                '  • 删除列：只丢该列的数据\n'
-                '  • 列名改了但「中文名」没改：自动跟着改名，数据保留\n'
-                + preview +
-                '\n\n改前会自动备份数据库。确定要继续吗？',
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
-            )
-            if reply != QMessageBox.Yes:
+                QMessageBox.warning(self, '警告', '无法获取数据库文件')
                 return
             
-            # ★ v6.5：与主窗口共用同一套「备份 + 迁移表结构 + 保存配置」流程
             try:
-                ok, msg = apply_column_config_migration(db_file, username,
-                                                        self.user_manager, new_columns_config)
+                # 创建新的数据库结构
+                user_db = UserDatabase(db_file)
+                user_db.initialize_database(new_columns_config)
+                user_db.close()
+                
+                # 更新用户配置
+                new_settings = json.dumps(new_columns_config, ensure_ascii=False)
+                if self.user_manager.update_user_settings(username, new_settings):
+                    QMessageBox.information(self, '成功', '列配置修改成功')
+                else:
+                    QMessageBox.warning(self, '警告', '更新用户配置失败')
+                    
             except Exception as e:
-                notify(self, f'修改列配置失败: {str(e)}', 'error')
-                return
-            if ok:
-                notify(self, f'列配置修改成功\n\n{msg}\n（已自动备份数据库）', 'info')
-            else:
-                notify(self, f'列配置修改失败: {msg}', 'warn')
+                QMessageBox.critical(self, '错误', f'修改列配置失败: {str(e)}')
 
 
     # ===== 全局设置实时自动保存 =====
@@ -3532,7 +2931,7 @@ class LoginWindow(QMainWindow):
     def login(self):
         selected_items = self.user_list.selectedItems()
         if not selected_items:
-            notify(self, '请选择一个用户', 'warn')
+            QMessageBox.warning(self, '警告', '请选择一个用户')
             return
         
         username = selected_items[0].text()
@@ -3559,49 +2958,44 @@ class LoginWindow(QMainWindow):
             return
         
         if username in [self.user_list.item(i).text() for i in range(self.user_list.count())]:
-            notify(self, '用户名已存在', 'warn')
+            QMessageBox.warning(self, '警告', '用户名已存在')
             return
         
         col_dialog = ColumnConfigDialog()
         if col_dialog.exec() == QDialog.Accepted:
             columns_config = col_dialog.get_columns_config()
             if not columns_config:
-                notify(self, '必须至少配置一列', 'warn')
+                QMessageBox.warning(self, '警告', '必须至少配置一列')
                 return
             
             db_file = f'user_{username}.db'
-            # ★ v6.7：新建库必须用【独立连接】。以前拿的是池化连接，close() 会把
-            #   主窗口正在用的共享连接一起关掉（v6.5 已踩过一次同类问题）。
-            user_db = UserDatabase(db_file, private=True)
-            try:
-                user_db.initialize_database(columns_config)
-            finally:
-                user_db.close()
+            user_db = UserDatabase(db_file)
+            user_db.initialize_database(columns_config)
+            user_db.close()
             
             settings = json.dumps(columns_config, ensure_ascii=False)
             if self.user_manager.add_user(username, db_file, settings):
                 self.load_users()
             else:
-                notify(self, '添加用户失败', 'warn')
+                QMessageBox.warning(self, '警告', '添加用户失败')
     
     def delete_user(self):
         selected_items = self.user_list.selectedItems()
         if not selected_items:
-            notify(self, '请选择一个用户', 'warn')
+            QMessageBox.warning(self, '警告', '请选择一个用户')
             return
         
         username = selected_items[0].text()
         reply = QMessageBox.question(self, '确认', f'确定要删除用户 {username} 吗?\n这将删除所有相关数据!', 
                                    QMessageBox.Yes | QMessageBox.No)
         if reply == QMessageBox.Yes:
-            # ★ v6.7：先取真实库文件名（删用户后查不到了），避免删错文件
-            db_file = self.user_manager.get_user_db_file(username) or f'user_{username}.db'
             if self.user_manager.delete_user(username):
+                db_file = f'user_{username}.db'
                 if os.path.exists(db_file):
                     os.remove(db_file)
                 self.load_users()
             else:
-                notify(self, '删除用户失败', 'warn')
+                QMessageBox.warning(self, '警告', '删除用户失败')
 
     def import_users(self):
         """导入用户数据"""
@@ -3669,13 +3063,13 @@ class LoginWindow(QMainWindow):
                                 users_data = list(reader)
                             print(f"[DEBUG] 用户选择 {encoding} 编码，成功读取 {len(users_data)} 行数据")
                         except Exception as e:
-                            notify(self, f'使用 {encoding} 编码仍然失败: {str(e)}', 'error')
+                            QMessageBox.critical(self, '错误', f'使用 {encoding} 编码仍然失败: {str(e)}')
                             return
                     else:
-                        notify(self, '无法读取CSV文件，请检查文件编码或格式', 'error')
+                        QMessageBox.critical(self, '错误', '无法读取CSV文件，请检查文件编码或格式')
                         return
             else:
-                notify(self, '不支持的文件格式', 'warn')
+                QMessageBox.warning(self, '警告', '不支持的文件格式')
                 return
             
             # 显示导入选项对话框
@@ -3704,11 +3098,14 @@ class LoginWindow(QMainWindow):
                         if self.user_manager.add_user(username, db_file, settings):
                             imported_count += 1
                 
-                notify(self, f'成功导入 {imported_count} 个用户\n失败 {len(dialog.get_selected_users()) - imported_count} 个', 'info')
+                QMessageBox.information(
+                    self, '导入完成', 
+                    f'成功导入 {imported_count} 个用户\n失败 {len(dialog.get_selected_users()) - imported_count} 个'
+                )
                 self.load_users()
                 
         except Exception as e:
-            notify(self, f'导入用户失败: {str(e)}', 'error')
+            QMessageBox.critical(self, '错误', f'导入用户失败: {str(e)}')
 
 
 
@@ -3733,14 +3130,14 @@ class LoginWindow(QMainWindow):
             elif file_type == 'backup':
                 data = self.parse_backup_file(filename)
                 if data is None:
-                    notify(self, '无法解析备份文件', 'warn')
+                    QMessageBox.warning(self, '警告', '无法解析备份文件')
                     return
             else:
-                notify(self, '请选择JSON格式的规则文件', 'warn')
+                QMessageBox.warning(self, '警告', '请选择JSON格式的规则文件')
                 return
             
             if not isinstance(data, dict):
-                notify(self, '不是有效的规则JSON格式', 'warn')
+                QMessageBox.warning(self, '警告', '不是有效的规则JSON格式')
                 return
             
             # 自动生成用户名
@@ -3787,14 +3184,17 @@ class LoginWindow(QMainWindow):
             # 添加用户到管理器
             settings = json.dumps(columns_config, ensure_ascii=False)
             if self.user_manager.add_user(username, db_file, settings):
-                notify(self, f'麻将规则导入成功\n已创建用户: {username}\n导入规则数: {imported_count}', 'info')
+                QMessageBox.information(
+                    self, '成功', 
+                    f'麻将规则导入成功\n已创建用户: {username}\n导入规则数: {imported_count}'
+                )
                 self.load_users()
             else:
-                notify(self, '创建用户失败', 'warn')
+                QMessageBox.warning(self, '警告', '创建用户失败')
                 
         except Exception as e:
             print(f"[DEBUG] 导入规则失败: {str(e)}")
-            notify(self, f'导入规则失败: {str(e)}', 'error')
+            QMessageBox.critical(self, '错误', f'导入规则失败: {str(e)}')
 
 
     def parse_text_file(self, filename):
@@ -4394,10 +3794,10 @@ class LoginWindow(QMainWindow):
                 for error in error_details:
                     f.write(error + "\n")
             
-            notify(self, f'错误报告已导出到: {filename}', 'info')
+            QMessageBox.information(self, '成功', f'错误报告已导出到: {filename}')
             
         except Exception as e:
-            notify(self, f'导出失败: {str(e)}', 'error')
+            QMessageBox.critical(self, '导出错误', f'导出失败: {str(e)}')
 
     def read_import_file(self, filename, import_config):
         """读取导入文件，根据文件大小自动选择读取方法 - 移除行数限制"""
@@ -5210,14 +4610,14 @@ class LoginWindow(QMainWindow):
                     
             except Exception as e:
                 print(f"[DEBUG] 导入文件 {filename} 失败: {str(e)}")
-                notify(self, f'导入文件 {os.path.basename(filename)} 失败: {str(e)}', 'error')
+                QMessageBox.critical(self, '错误', f'导入文件 {os.path.basename(filename)} 失败: {str(e)}')
         
         # 显示批量导入结果
         result_msg = f"⚡📥批量导入完成！\n\n总共处理 {len(filenames)} 个文件\n成功: {total_success} 条\n失败: {total_errors} 条"
         if total_errors > 0:
             result_msg += f"\n\n失败原因可能包括：\n- 数据格式不正确\n- 必填字段为空\n- 唯一约束冲突"
         
-        notify(self, result_msg, 'info')
+        QMessageBox.information(self, '批量导入结果', result_msg)
         self.load_users()
 
 
@@ -5231,7 +4631,7 @@ class LoginWindow(QMainWindow):
     
         # 添加字段映射验证
         if not mapping:
-            notify(self, '字段映射为空，请重新配置导入设置', 'warn')
+            QMessageBox.warning(self, '警告', '字段映射为空，请重新配置导入设置')
             return 0, 0
         
         print(f"[DEBUG] 字段映射配置: {mapping}")
@@ -5521,7 +4921,7 @@ class LoginWindow(QMainWindow):
         if use_unified and processed_files > 1:
             result_msg += f"\n\n✅ 已应用统一配置到所有文件"
         
-        notify(self, result_msg, 'info')
+        QMessageBox.information(self, '批量导入结果', result_msg)
         self.load_users()
 
     def batch_ultra_fast_import_enhanced(self):
@@ -5690,11 +5090,11 @@ class LoginWindow(QMainWindow):
             if processed_files > 1:
                 result_msg += f"\n\n✅ 已应用统一配置到所有文件"
             
-            notify(self, result_msg, 'info')
+            QMessageBox.information(self, '无人值守导入结果', result_msg)
             self.load_users()
             
         except Exception as e:
-            notify(self, f'无人值守批量导入失败: {str(e)}', 'error')
+            QMessageBox.critical(self, '错误', f'无人值守批量导入失败: {str(e)}')
 
     def batch_ultra_fast_import_original(self, filenames):
         """原有的批量导入方法（重命名）"""
@@ -5816,11 +5216,11 @@ class LoginWindow(QMainWindow):
             if processed_files > 1:
                 result_msg += f"\n\n✅ 已应用统一配置到所有文件"
             
-            notify(self, result_msg, 'info')
+            QMessageBox.information(self, '无人值守导入结果', result_msg)
             self.load_users()
             
         except Exception as e:
-            notify(self, f'无人值守批量导入失败: {str(e)}', 'error')
+            QMessageBox.critical(self, '错误', f'无人值守批量导入失败: {str(e)}')
 
     def batch_ultra_fast_import_with_cleanup(self, filenames):
         """交互式批量导入，每次导入后清理状态"""
@@ -5870,7 +5270,7 @@ class LoginWindow(QMainWindow):
         # 显示批量导入结果
         result_msg = f"⚡📥批量导入完成！\n\n总共处理 {len(filenames)} 个文件\n成功导入 {processed_files} 个文件\n成功记录: {total_success} 条\n失败记录: {total_errors} 条"
         
-        notify(self, result_msg, 'info')
+        QMessageBox.information(self, '批量导入结果', result_msg)
         self.load_users()
 
 
@@ -5967,9 +5367,8 @@ class ImportUsersDialog(QDialog):
 
 
 class ColumnConfigDialog(QDialog):
-    def __init__(self, parent=None):
-        # ★ v6.5：支持传入父窗口（登录后从主窗口打开时居中显示/模态跟随）
-        super().__init__(parent)
+    def __init__(self):
+        super().__init__()
         self.setWindowTitle('列配置')
         self.resize(800, 500)
         
@@ -6018,30 +5417,13 @@ class ColumnConfigDialog(QDialog):
     def add_column(self):
         row = self.table.rowCount()
         self.table.insertRow(row)
-
-        # ★ v6.7：默认列名/中文名避开已存在的名字，避免重名列（重名会让建表/迁移失败）
-        existing_names = set()
-        existing_labels = set()
-        for r in range(self.table.rowCount()):
-            wname = self.table.cellWidget(r, 0)
-            wlabel = self.table.cellWidget(r, 1)
-            if wname is not None and wname.text().strip():
-                existing_names.add(wname.text().strip())
-            if wlabel is not None and wlabel.text().strip():
-                existing_labels.add(wlabel.text().strip())
-        n = row + 1
-        while f'column_{n}' in existing_names:
-            n += 1
-        m = n
-        while f'列 {m}' in existing_labels:
-            m += 1
-
+        
         # 列名
-        col_name = QLineEdit(f'column_{n}')
+        col_name = QLineEdit(f'column_{row+1}')
         self.table.setCellWidget(row, 0, col_name)
         
         # 显示名称
-        col_label = QLineEdit(f'列 {m}')
+        col_label = QLineEdit(f'列 {row+1}')
         self.table.setCellWidget(row, 1, col_label)
         
         # 数据类型 - 增加EAN13选项
@@ -6073,14 +5455,8 @@ class ColumnConfigDialog(QDialog):
     
     def remove_column(self):
         current_row = self.table.currentRow()
-        if current_row < 0:
-            notify(self, '请先选中要删除的那一行', 'info')
-            return
-        # ★ v6.7：不允许删到一列不剩（否则确定后会得到空配置，白忙一场）
-        if self.table.rowCount() <= 1:
-            notify(self, '至少要保留一列', 'warn')
-            return
-        self.table.removeRow(current_row)
+        if current_row >= 0:
+            self.table.removeRow(current_row)
     
     def get_columns_config(self):
         columns_config = []
@@ -6116,13 +5492,6 @@ class ColumnConfigDialog(QDialog):
         # 清除当前所有行
         while self.table.rowCount() > 0:
             self.table.removeRow(0)
-
-        # ★ v6.7：拿不到现有配置时也保留一行默认列。
-        #   否则对话框是空白的，用户随手填两列就会把整张表的列配置换掉
-        #   （实测就因此把“定位器ID”这一列换成了 column_1/column_2， 70 条数据被清空）。
-        if not columns_config:
-            self.add_column()
-            return
         
         # 添加配置行
         for col_config in columns_config:
@@ -6199,8 +5568,6 @@ class MainWindow(QMainWindow):
             self._start_maximized = False
         self.current_rowid = None
         self.is_data_loaded = False  # 新增：标记数据是否已加载
-        self._scroll_to_last_after_load = False  # ★ v6.6：刚添加完数据，加载完成后自动翻到最新行
-        self._pending_scroll_rowid = None  # ★ v6.6：刚插入记录的 rowid（用于精确回位）
         self.current_page = 0
         self.page_size = 100  # 每页显示100条记录
         self.total_pages = 0
@@ -6210,7 +5577,6 @@ class MainWindow(QMainWindow):
         self.thread_pool.setMaxThreadCount(4)  # 最多4个并发线程
         self.active_workers = []  # 跟踪活跃的工作线程
         self._retired_workers = []  # ★ 待回收线程：run() 返回后仍需保活一拍，详见 _cleanup_worker()
-        self._pool_workers = []  # ★ 线程池（QRunnable）任务保活，详见 _start_pool_worker()
         self.progress_dialog = None  # 进度对话框引用
         # ===== 多线程支持结束 =====
     
@@ -6222,25 +5588,15 @@ class MainWindow(QMainWindow):
             print("[DEBUG] chardet不可用，将使用基础编码检测")
             self.chardet = None
         
-        settings_config = []
         try:
-            settings_config = json.loads(settings) if settings else []
-        except Exception:
-            settings_config = []
-        if not isinstance(settings_config, list):
-            settings_config = []
-
+            self.columns_config = json.loads(settings)
+        except:
+            self.columns_config = []
+        
         self.user_db = UserDatabase(db_file)
-
-        # ★ v6.7：列配置以【数据库真实表结构】为准。
-        #   以前直接信 users.settings，一旦两者不一致（恢复过旧库备份、配置被别的
-        #   路径改过、旧版本遗留等），就会出现「表格错位/满是 None」并且添加数据报
-        #   “table data has no column named xxx”的没法录入状态（实测踩过）。
-        db_config = self.user_db.get_columns_config() or []
-        self.columns_config = db_config or settings_config
-        if db_config:
-            self._heal_settings_columns_config(settings_config, db_config)
-
+        if not self.columns_config:
+            self.columns_config = self.user_db.get_columns_config()
+        
         self.init_ui()
         
         # 延迟加载数据，让界面先显示出来，避免启动卡顿
@@ -6251,7 +5607,8 @@ class MainWindow(QMainWindow):
             self.setWindowIcon(QIcon('icon.ico'))
 
         # 初始化时自动创建备份（使用线程池异步执行）
-        self._start_pool_worker(self._background_backup)
+        worker = BaseWorker(lambda: self.user_db.backup_database(backup_type="auto"))
+        self.thread_pool.start(worker)
         
         # 设置定时备份
         self.backup_timer = QTimer(self)
@@ -6263,92 +5620,10 @@ class MainWindow(QMainWindow):
         self.maintenance_timer.timeout.connect(self.periodic_maintenance)
         self.maintenance_timer.start(24 * 60 * 60 * 1000)  # 24小时执行一次
 
-    def _heal_settings_columns_config(self, settings_config, db_config):
-        """把 users.settings 里的列配置修正成与真实表结构一致（★ v6.7）
-
-        只在两边列名不一致时才写库，不每次启动都写。
-        """
-        try:
-            old_names = [c.get('name') for c in (settings_config or [])
-                         if isinstance(c, dict)]
-            new_names = [c.get('name') for c in (db_config or [])]
-            if old_names == new_names:
-                return
-            print(f"[DEBUG] 列配置与表结构不一致，已按表结构修正: {old_names} -> {new_names}")
-            self.user_manager.update_user_settings(
-                self.username, json.dumps(db_config, ensure_ascii=False))
-        except Exception as e:
-            print(f"[DEBUG] 修正用户列配置失败: {str(e)}")
-
-    def _sync_columns_config_with_db(self):
-        """重新按真实表结构校正内存里的列配置（★ v6.7）
-
-        返回 True 表示做了修正。用在“不能出现配置与表结构不一致”的关键入口：
-        添加数据前、打开列配置对话框前、迁移完成后。
-        """
-        try:
-            db_config = self.user_db.get_columns_config() or []
-        except Exception as e:
-            print(f"[DEBUG] 读取列配置失败: {str(e)}")
-            return False
-        if not db_config:
-            return False
-        if [c.get('name') for c in (self.columns_config or [])] == \
-                [c.get('name') for c in db_config]:
-            return False
-        self.columns_config = db_config
-        self._heal_settings_columns_config([], db_config)
-        return True
-
-    def _background_backup(self):
-        """线程池里执行的自动备份
-
-        ★ v6.3：使用工作线程专属的独立连接。原来直接拿 self.user_db（与主线程
-        共用的池化连接），一旦主线程先执行了 close()/退出，备份就会报
-        “Cannot operate on a closed database”，且存在并发用同一 Cursor 的风险。
-        """
-        db = None
-        try:
-            db = self.user_db.clone_for_thread()
-            db.backup_database(backup_type="auto")
-        except Exception as e:
-            print(f"[DEBUG] 自动备份失败: {str(e)}")
-        finally:
-            try:
-                if db is not None and getattr(db, 'private_connection', False):
-                    db.close()
-            except Exception:
-                pass
-
     def auto_backup_async(self):
         """异步自动备份"""
-        self._start_pool_worker(self._background_backup)
-
-    def _start_pool_worker(self, fn):
-        """把一次性任务交给线程池，并保留 Python 引用直到它结束
-
-        ★ v6.4：QThreadPool.start() 后若 Python 侧不保留引用，runnable 及其
-        WorkerSignals 可能被提前回收，任务内部再 emit 就会报
-        RuntimeError: Signal source has been deleted。
-        """
-        worker = BaseWorker(fn)
-        if not hasattr(self, '_pool_workers'):
-            self._pool_workers = []
-        self._pool_workers.append(worker)
-
-        def _release(*_a):
-            try:
-                self._pool_workers.remove(worker)
-            except ValueError:
-                pass
-
-        try:
-            worker.signals.finished.connect(_release)
-            worker.signals.error.connect(_release)
-        except Exception:
-            pass
+        worker = BaseWorker(lambda: self.user_db.backup_database(backup_type="auto"))
         self.thread_pool.start(worker)
-        return worker
 
     def _create_progress_dialog(self, title, max_value=0):
         """创建或重用进度对话框"""
@@ -6532,7 +5807,7 @@ class MainWindow(QMainWindow):
             
         except Exception as e:
             print(f"[DEBUG] 分页加载数据失败: {str(e)}")
-            notify(self, f'加载数据失败: {str(e)}', 'error')
+            QMessageBox.critical(self, '错误', f'加载数据失败: {str(e)}')
 
     def update_pagination_info(self):
         """更新分页信息显示"""
@@ -6861,11 +6136,6 @@ class MainWindow(QMainWindow):
         settings_action.triggered.connect(self.show_user_settings)
         tools_menu.addAction(settings_action)
         
-        # ★ v6.5：登录后也能修改列配置（数据保留，改前自动备份）
-        modify_columns_action = QAction('🧩修改列配置', self)
-        modify_columns_action.triggered.connect(self.modify_columns_config)
-        tools_menu.addAction(modify_columns_action)
-        
         # 帮助菜单
         help_menu = menubar.addMenu('📖帮助')
         
@@ -6935,7 +6205,7 @@ class MainWindow(QMainWindow):
             
         except Exception as e:
             print(f"[DEBUG] 加载数据失败: {str(e)}")
-            notify(self, f'加载数据失败: {str(e)}', 'error')
+            QMessageBox.critical(self, '错误', f'加载数据失败: {str(e)}')
 
     def _on_data_loaded(self, result):
         """数据加载完成的回调（主线程）"""
@@ -6957,47 +6227,10 @@ class MainWindow(QMainWindow):
             self.update_status_bar()
             self.is_data_loaded = True
             self.status_bar.showMessage(f"数据加载完成，共 {len(data)} 条记录")
-            # ★ v6.6：刚添加过数据时自动翻到最新行（放最后，避免被其它刷新盖掉）
-            self._scroll_to_newest_row()
         except Exception as e:
             print(f"[DEBUG] 更新表格失败: {str(e)}")
             self.status_bar.showMessage("数据加载完成但表格更新失败")
-            notify(self, f'数据显示失败: {str(e)}', 'error')
-
-    def _scroll_to_newest_row(self):
-        """★ v6.6：添加数据后自动翻到最新行（刚添加的那条）并选中它
-
-        只在本窗口刚执行过「添加数据」时生效（`_scroll_to_last_after_load`），
-        刷新/搜索/导入等其它刷新表格的场景不受影响。
-        优先按刚插入的 rowid 定位（即使启用了表头排序也不会找错），
-        找不到则退化为最后一行（数据按 rowid 升序加载，最新记录本就在末行）。
-        """
-        if not getattr(self, '_scroll_to_last_after_load', False):
-            return
-        self._scroll_to_last_after_load = False
-        target_rowid = getattr(self, '_pending_scroll_rowid', None)
-        self._pending_scroll_rowid = None
-        try:
-            rows = self.data_table.rowCount()
-            if rows <= 0:
-                return
-            row = rows - 1
-            if target_rowid is not None:
-                for r in range(rows):
-                    item = self.data_table.item(r, 0)
-                    if item is not None and item.data(Qt.UserRole) == target_rowid:
-                        row = r
-                        break
-            item = self.data_table.item(row, 0)
-            if item is not None:
-                self.data_table.scrollToItem(item, QAbstractItemView.PositionAtBottom)
-            else:
-                self.data_table.scrollToBottom()
-            # 顺手选中新行，方便立即查看/编辑
-            self.data_table.selectRow(row)
-            self.data_table.setCurrentCell(row, 0)
-        except Exception as e:
-            print(f"[DEBUG] 滚动到最新行失败: {str(e)}")
+            QMessageBox.critical(self, '错误', f'数据显示失败: {str(e)}')
 
     def _on_load_error(self, error_msg):
         """数据加载错误的回调（主线程）"""
@@ -7009,30 +6242,7 @@ class MainWindow(QMainWindow):
         self._cleanup_worker(sender if sender is not None else current)
         self._cleanup_finished_workers()
         self.status_bar.showMessage(f"数据加载失败: {error_msg}")
-        notify(self, f'加载数据失败: {error_msg}', 'error')
-
-    def _table_column_index(self, columns_config=None):
-        """{列名: 在 `SELECT rowid, * FROM data` 结果里的下标}（★ v6.7）
-
-        表格填充统一走“列名 → 下标”，而不是按位置对号，避免配置与表结构/顺序
-        不一致时串列。
-        """
-        try:
-            db_columns = self.user_db.get_table_columns()
-        except Exception:
-            db_columns = []
-        if not db_columns:
-            db_columns = [c.get('name') for c in (columns_config or self.columns_config or [])]
-        return {name: i for i, name in enumerate(db_columns) if name}
-
-    @staticmethod
-    def _value_by_name(col_index, row_values, col_name):
-        """按列名从一行数据里取值；NULL/缺列统一给空字符串（★ v6.7）"""
-        pos = (col_index or {}).get(col_name)
-        if pos is None or pos >= len(row_values):
-            return ''
-        value = row_values[pos]
-        return '' if value is None else str(value)
+        QMessageBox.critical(self, '错误', f'加载数据失败: {error_msg}')
 
     def _update_table_with_data(self, data, columns_config=None):
         """在主线程中更新表格显示（提取公共逻辑）"""
@@ -7057,14 +6267,6 @@ class MainWindow(QMainWindow):
         
         # 加载数据
         self.data_table.setRowCount(len(data))
-
-        # ★ v6.7：按【列名】取值，而不是按位置。
-        #   配置与表结构万一不一致（或顺序不同），也不会串列、也不会把 NULL 显示成
-        #   “None”文本（旧版把 None 直接 str() 出来，用户以为数据丢了）。
-        col_index = self._table_column_index(columns_config)
-
-        def _value_of(col_name, row_values):
-            return self._value_by_name(col_index, row_values, col_name)
         
         # 马卡龙色系交替行颜色
         colors = [
@@ -7083,11 +6285,7 @@ class MainWindow(QMainWindow):
             # 设置交替行背景色
             color = colors[row_idx % len(colors)]
             for col_idx in range(len(headers)):
-                if col_idx < len(columns_config):
-                    raw = _value_of(columns_config[col_idx]['name'], row_values)
-                else:
-                    raw = ''          # 条形码/二维码占位列：内容由下面的 cellWidget 负责
-                item = QTableWidgetItem(raw)
+                item = QTableWidgetItem(str(row_values[col_idx]) if col_idx < len(row_values) else "")
                 item.setData(Qt.UserRole, rowid)
                 item.setBackground(QColor(color))
                 item.setForeground(QColor('#333333'))
@@ -7097,8 +6295,8 @@ class MainWindow(QMainWindow):
             # 添加条形码
             col_offset = len(columns_config)
             for col in barcode_cols:
-                barcode_value = _value_of(col['name'], row_values)
-                barcode_img = self.generate_barcode(barcode_value) if barcode_value else None
+                barcode_value = row_values[columns_config.index(col)]
+                barcode_img = self.generate_barcode(barcode_value)
                 if barcode_img:
                     label = QLabel()
                     label.setPixmap(QPixmap.fromImage(barcode_img))
@@ -7109,8 +6307,8 @@ class MainWindow(QMainWindow):
             
             # 添加二维码
             for col in qrcode_cols:
-                qrcode_value = _value_of(col['name'], row_values)
-                qrcode_img = self.generate_qrcode(qrcode_value) if qrcode_value else None
+                qrcode_value = row_values[columns_config.index(col)]
+                qrcode_img = self.generate_qrcode(qrcode_value)
                 if qrcode_img:
                     label = QLabel()
                     label.setPixmap(QPixmap.fromImage(qrcode_img))
@@ -7203,8 +6401,6 @@ class MainWindow(QMainWindow):
                 MacaronColors.PEACH_ORANGE   # 蜜桃橙
             ]
             
-            # ★ v6.7：搜索结果的填充也按列名取值（否则 NULL 会显示成 “None”）
-            col_index = self._table_column_index()
             for row_idx, row_data in enumerate(data):
                 # rowid是第一个元素
                 rowid = row_data[0]
@@ -7212,26 +6408,26 @@ class MainWindow(QMainWindow):
                 
                 # 设置交替行背景色
                 color = colors[row_idx % len(colors)]
-                for col_idx, col in enumerate(self.columns_config):
-                    item = QTableWidgetItem(
-                        self._value_by_name(col_index, row_values, col['name']))
-                    item.setData(Qt.UserRole, rowid)  # 保存rowid
-                    
-                    # 设置背景色和文本颜色
-                    item.setBackground(QColor(color))
-                    item.setForeground(QColor('#333333'))  # 深色文字提高可读性
-                    
-                    # 设置对齐方式
-                    item.setTextAlignment(Qt.AlignVCenter | Qt.AlignLeft)
-                    
-                    self.data_table.setItem(row_idx, col_idx, item)
+                for col_idx, value in enumerate(row_values):
+                    if col_idx < len(self.columns_config):  # 只处理数据列，不处理条码列
+                        item = QTableWidgetItem(str(value))
+                        item.setData(Qt.UserRole, rowid)  # 保存rowid
+                        
+                        # 设置背景色和文本颜色
+                        item.setBackground(QColor(color))
+                        item.setForeground(QColor('#333333'))  # 深色文字提高可读性
+                        
+                        # 设置对齐方式
+                        item.setTextAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+                        
+                        self.data_table.setItem(row_idx, col_idx, item)
                 
                 # 添加条形码
                 col_offset = len(self.columns_config)
                 barcode_cols = [col for col in self.columns_config if col.get('is_barcode', False)]
                 for col in barcode_cols:
-                    barcode_value = self._value_by_name(col_index, row_values, col['name'])
-                    barcode_img = self.generate_barcode(barcode_value) if barcode_value else None
+                    barcode_value = row_values[self.columns_config.index(col)]
+                    barcode_img = self.generate_barcode(barcode_value)
                     if barcode_img:
                         label = QLabel()
                         label.setPixmap(QPixmap.fromImage(barcode_img))
@@ -7243,8 +6439,8 @@ class MainWindow(QMainWindow):
                 # 添加二维码
                 qrcode_cols = [col for col in self.columns_config if col.get('is_qrcode', False)]
                 for col in qrcode_cols:
-                    qrcode_value = self._value_by_name(col_index, row_values, col['name'])
-                    qrcode_img = self.generate_qrcode(qrcode_value) if qrcode_value else None
+                    qrcode_value = row_values[self.columns_config.index(col)]
+                    qrcode_img = self.generate_qrcode(qrcode_value)
                     if qrcode_img:
                         label = QLabel()
                         label.setPixmap(QPixmap.fromImage(qrcode_img))
@@ -7270,7 +6466,7 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage(search_info)
             
         except Exception as e:
-            notify(self, f'搜索失败: {str(e)}', 'error')
+            QMessageBox.critical(self, '错误', f'搜索失败: {str(e)}')
 
     def search_all_columns(self):
         """搜索所有列的内容 - 增强版支持拼音（多线程）"""
@@ -7287,13 +6483,13 @@ class MainWindow(QMainWindow):
             self._retire_worker(getattr(self, 'search_worker', None))
             self.search_worker = SearchDataWorker(self.user_db.clone_for_thread(), keyword)
             self.search_worker.finished.connect(lambda data: self._on_search_finished(data, keyword))
-            self.search_worker.error.connect(lambda e: notify(self, f'搜索失败: {e}', 'error'))
+            self.search_worker.error.connect(lambda e: QMessageBox.critical(self, '错误', f'搜索失败: {e}'))
             self.search_worker.status.connect(lambda msg: self.status_bar.showMessage(msg))
             self.active_workers.append(self.search_worker)
             self.search_worker.start()
             
         except Exception as e:
-            notify(self, f'搜索失败: {str(e)}', 'error')
+            QMessageBox.critical(self, '错误', f'搜索失败: {str(e)}')
 
     def _on_search_finished(self, data, keyword):
         """搜索完成回调（主线程）"""
@@ -7413,24 +6609,24 @@ class MainWindow(QMainWindow):
         """编辑选中的数据"""
         selected_rows = self.data_table.selectionModel().selectedRows()
         if not selected_rows:
-            notify(self, '请选择要编辑的行', 'warn')
+            QMessageBox.warning(self, '警告', '请选择要编辑的行')
             return
         
         row = selected_rows[0].row()
         rowid_item = self.data_table.item(row, 0)
         
         if not rowid_item:
-            notify(self, '无法获取行ID', 'warn')
+            QMessageBox.warning(self, '警告', '无法获取行ID')
             return
         
         self.current_rowid = rowid_item.data(Qt.UserRole)
         if not self.current_rowid:
-            notify(self, '获取的行ID无效', 'warn')
+            QMessageBox.warning(self, '警告', '获取的行ID无效')
             return
         
         data = self.user_db.get_data_by_id(self.current_rowid)
         if not data:
-            notify(self, '无法获取数据', 'warn')
+            QMessageBox.warning(self, '警告', '无法获取数据')
             return
         
         # 准备当前数据
@@ -7449,18 +6645,18 @@ class MainWindow(QMainWindow):
             for col in self.columns_config:
                 if col.get('is_unique', False) and new_data[col['name']]:
                     if not self.user_db.check_unique(col['name'], new_data[col['name']], self.current_rowid):
-                        notify(self, f"{col['label']} 的值必须唯一", 'warn')
+                        QMessageBox.warning(self, '警告', f"{col['label']} 的值必须唯一")
                         return
             
             try:
                 # 更新数据
                 if self.user_db.update_data(self.current_rowid, new_data):
-                    notify(self, '数据更新成功', 'info')
+                    QMessageBox.information(self, '成功', '数据更新成功')
                     self.load_data()
                 else:
-                    notify(self, '更新数据失败', 'warn')
+                    QMessageBox.warning(self, '警告', '更新数据失败')
             except Exception as e:
-                notify(self, f'更新数据失败: {str(e)}', 'warn')
+                QMessageBox.warning(self, '错误', f'更新数据失败: {str(e)}')
 
 
 
@@ -7469,11 +6665,6 @@ class MainWindow(QMainWindow):
     
     def add_data(self):
         """添加新数据"""
-        # ★ v6.7：先确认列配置与真实表结构一致，否则会报 no column named xxx
-        #   （列配置与表结构分裂时，录入框里的列名在表里根本不存在）
-        if self._sync_columns_config_with_db():
-            self.status_bar.showMessage('⚠️ 列配置与表结构不一致，已按表结构自动修正', 6000)
-            self.load_data()
         dialog = EditDataDialog(self.columns_config, parent=self)
         if dialog.exec() == QDialog.Accepted:
             data = dialog.get_data()
@@ -7482,24 +6673,18 @@ class MainWindow(QMainWindow):
             for col in self.columns_config:
                 if col.get('is_unique', False) and data[col['name']]:
                     if not self.user_db.check_unique(col['name'], data[col['name']]):
-                        notify(self, f"{col['label']} 的值必须唯一", 'warn')
+                        QMessageBox.warning(self, '警告', f"{col['label']} 的值必须唯一")
                         return
             
             try:
-                # 插入数据（insert_data 返回新记录的 rowid）
-                new_rowid = self.user_db.insert_data(data)
-                if new_rowid:
-                    # ★ v6.4：按用户要求不再弹「数据添加成功」对话框，改在状态栏提示
-                    # （顺带避免了嵌套事件循环里又去刷新表格）
-                    self.status_bar.showMessage('✅ 数据添加成功', 5000)
-                    # ★ v6.6：记下新记录 rowid，加载完成后自动翻到那一行
-                    self._scroll_to_last_after_load = True
-                    self._pending_scroll_rowid = new_rowid
+                # 插入数据
+                if self.user_db.insert_data(data):
+                    QMessageBox.information(self, '成功', '数据添加成功')
                     self.load_data()
                 else:
-                    self.status_bar.showMessage('❌ 添加数据失败', 8000)
+                    QMessageBox.warning(self, '警告', '添加数据失败')
             except Exception as e:
-                notify(self, f'添加数据失败: {str(e)}', 'warn')
+                QMessageBox.warning(self, '错误', f'添加数据失败: {str(e)}')
 
     
     def update_data(self):
@@ -7516,10 +6701,10 @@ class MainWindow(QMainWindow):
             print("[DEBUG] current_rowid is None or empty")
             # 更详细的错误提示
             if not self.data_table.selectionModel().selectedRows():
-                notify(self, '请先在表格中选择要更新的行', 'warn')
+                QMessageBox.warning(self, '警告', '请先在表格中选择要更新的行')
             else:
                 print("[DEBUG] current_rowid is None or empty")
-                notify(self, '无法获取选中行的ID，请尝试重新选择', 'warn')
+                QMessageBox.warning(self, '警告', '无法获取选中行的ID，请尝试重新选择')
             return
         
         print(f"[DEBUG] Updating data with rowid: {self.current_rowid}")
@@ -7527,36 +6712,36 @@ class MainWindow(QMainWindow):
         # 验证输入数据
         data, errors = self.validate_input_data()
         if errors:
-            notify(self, '\n'.join(errors), 'warn')
+            QMessageBox.warning(self, '输入错误', '\n'.join(errors))
             return
         
         # 检查唯一性约束
         for col in self.columns_config:
             if col.get('is_unique', False) and data[col['name']]:
                 if not self.user_db.check_unique(col['name'], data[col['name']], self.current_rowid):
-                    notify(self, f"{col['label']} 的值必须唯一", 'warn')
+                    QMessageBox.warning(self, '警告', f"{col['label']} 的值必须唯一")
                     self.input_widgets[col['name']].setStyleSheet("background-color: #FFCDD2;")
                     return
         
         try:
             # 更新数据
             if self.user_db.update_data(self.current_rowid, data):
-                notify(self, '数据更新成功', 'info')
+                QMessageBox.information(self, '成功', '数据更新成功')
                 # 重置状态并刷新数据
                 self.current_rowid = None
                 self.clear_inputs()
                 self.load_data()
                 self.update_btn.setEnabled(False)
             else:
-                notify(self, '更新数据失败', 'warn')
+                QMessageBox.warning(self, '警告', '更新数据失败')
         except Exception as e:
-            notify(self, f'更新数据失败: {str(e)}', 'warn')
+            QMessageBox.warning(self, '错误', f'更新数据失败: {str(e)}')
 
     
     def delete_data(self):
         selected_rows = self.data_table.selectionModel().selectedRows()
         if not selected_rows:
-            notify(self, '请选择要删除的行', 'warn')
+            QMessageBox.warning(self, '警告', '请选择要删除的行')
             return
         
         row = selected_rows[0].row()
@@ -7567,12 +6752,12 @@ class MainWindow(QMainWindow):
         if reply == QMessageBox.Yes:
             try:
                 if self.user_db.delete_data(rowid):
-                    notify(self, '数据删除成功', 'info')
+                    QMessageBox.information(self, '成功', '数据删除成功')
                     self.load_data()
                 else:
-                    notify(self, '删除数据失败', 'warn')
+                    QMessageBox.warning(self, '警告', '删除数据失败')
             except Exception as e:
-                notify(self, f'删除数据失败: {str(e)}', 'warn')
+                QMessageBox.warning(self, '错误', f'删除数据失败: {str(e)}')
     
     def clear_inputs(self):
         for widget in self.input_widgets.values():
@@ -7594,7 +6779,7 @@ class MainWindow(QMainWindow):
 
         if not data:
             print("[DEBUG] No data found for the selected row")
-            notify(self, '无法获取数据详情', 'warn')
+            QMessageBox.warning(self, '警告', '无法获取数据详情')
             return
 
         # 创建带滚动区域的容器
@@ -7761,9 +6946,9 @@ class MainWindow(QMainWindow):
                         filename = f"{path}/{col['name']}_qrcode.png"
                         img.save(filename)
             
-            notify(self, f"图片已保存到：\n{path}", 'info')
+            QMessageBox.information(self, "成功", f"图片已保存到：\n{path}")
         except Exception as e:
-            notify(self, f"导出失败：{str(e)}", 'error')
+            QMessageBox.critical(self, "错误", f"导出失败：{str(e)}")
 
     
     def export_data(self):
@@ -7778,13 +6963,13 @@ class MainWindow(QMainWindow):
             self._retire_worker(getattr(self, 'export_worker', None))
             self.export_worker = ExportDataWorker(self.user_db.clone_for_thread(), filename)
             self.export_worker.finished.connect(lambda success: self._on_export_finished(success, filename))
-            self.export_worker.error.connect(lambda e: notify(self, f'导出数据失败: {e}', 'error'))
+            self.export_worker.error.connect(lambda e: QMessageBox.critical(self, '错误', f'导出数据失败: {e}'))
             self.export_worker.status.connect(lambda msg: self.status_bar.showMessage(msg))
             self.active_workers.append(self.export_worker)
             self.export_worker.start()
             
         except Exception as e:
-            notify(self, f'导出数据失败: {str(e)}', 'error')
+            QMessageBox.critical(self, '错误', f'导出数据失败: {str(e)}')
 
     def _on_export_finished(self, success, filename):
         """导出完成回调"""
@@ -7792,10 +6977,10 @@ class MainWindow(QMainWindow):
         self._cleanup_finished_workers()
         if success:
             self.status_bar.showMessage(f"数据已导出到 {filename}")
-            notify(self, f'数据已导出到 {filename}', 'info')
+            QMessageBox.information(self, '成功', f'数据已导出到 {filename}')
         else:
             self.status_bar.showMessage("导出数据失败")
-            notify(self, '导出数据失败', 'warn')
+            QMessageBox.warning(self, '警告', '导出数据失败')
     
     def show_user_settings(self):
         settings = self.user_manager.get_user_settings(self.username)
@@ -7810,25 +6995,11 @@ class MainWindow(QMainWindow):
         
         layout = QVBoxLayout()
         
-        layout.addWidget(QLabel('当前列配置（JSON）：'))
-
         # 显示当前列配置
         text_edit = QTextEdit()
         text_edit.setReadOnly(True)
         text_edit.setPlainText(json.dumps(columns_config, indent=2, ensure_ascii=False))
         layout.addWidget(text_edit)
-
-        # ★ v6.5：登录后直接在这里改列配置
-        btn_row = QHBoxLayout()
-        modify_btn = QPushButton('🧩修改列配置')
-
-        def _on_modify():
-            clicked['modify'] = True
-            dialog.accept()
-
-        modify_btn.clicked.connect(_on_modify)
-        btn_row.addWidget(modify_btn)
-        layout.addLayout(btn_row)
         
         # 关闭按钮
         close_btn = QPushButton('关闭')
@@ -7836,103 +7007,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(close_btn)
         
         dialog.setLayout(layout)
-
-        clicked = {'modify': False}
         dialog.exec()
-
-        if clicked['modify']:
-            self.modify_columns_config()
-
-    def modify_columns_config(self):
-        """修改当前登录用户的列配置（★ v6.5）
-
-        与登录窗口的那一项完全等价：先备份 → 迁移表结构（保留已有数据）→
-        保存用户配置 → 刷新界面（表头/统计/详情）。
-        """
-        if not getattr(self, 'username', None) or not getattr(self, 'db_file', None):
-            notify(self, '无法确定当前用户信息', 'warn')
-            return
-
-        # 当前配置：优先用数据库真实表结构（★ v6.7，避免拿到与表不符的旧配置）
-        self._sync_columns_config_with_db()
-        current_config = [dict(c) for c in (self.columns_config or [])]
-        if not current_config:
-            try:
-                settings = self.user_manager.get_user_settings(self.username)
-                current_config = json.loads(settings) if settings else []
-            except Exception:
-                current_config = []
-        print(f"[DEBUG] 修改列配置：当前共 {len(current_config)} 列")
-
-        col_dialog = ColumnConfigDialog(self)
-        col_dialog.load_existing_config(current_config)
-        if col_dialog.exec() != QDialog.Accepted:
-            return
-
-        new_columns_config = col_dialog.get_columns_config()
-        if not new_columns_config:
-            notify(self, '必须至少配置一列', 'warn')
-            return
-
-        dup = duplicate_column_names(new_columns_config)
-        if dup:
-            notify(self, f'列名重复：{"、".join(dup)}\n请先改成不同的列名', 'warn')
-            return
-
-        # ★ v6.7：把「哪些列保留数据、哪些列会丢」直接写在确认框里，
-        #   免得用户“只想加一列”却把整表配置换掉
-        preview = column_config_change_preview(self.db_file, new_columns_config)
-        reply = QMessageBox.question(
-            self, '修改列配置',
-            '将修改当前用户的列配置：\n\n'
-            '  • 新增列：已有记录该列为空\n'
-            '  • 删除列：只丢该列的数据\n'
-            '  • 列名改了但「中文名」没改：自动跟着改名，数据保留\n'
-            + preview +
-            '\n\n改前会自动备份数据库。确定要继续吗？',
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
-        if reply != QMessageBox.Yes:
-            return
-
-        # ★ 改配置会重建 data 表：先停掉正在跑的加载/搜索等线程，
-        #   避免它们握着旧表结构（也避免写库时和迁移相撞）
-        for worker in list(self.active_workers):
-            try:
-                worker.cancel()
-            except Exception:
-                pass
-        for worker in list(self.active_workers) + list(self._retired_workers):
-            try:
-                if worker is not None and worker.isRunning():
-                    worker.wait(2000)
-            except Exception:
-                pass
-
-        try:
-            ok, msg = apply_column_config_migration(self.db_file, self.username,
-                                                    self.user_manager, new_columns_config)
-        except Exception as e:
-            notify(self, f'修改列配置失败: {str(e)}', 'error')
-            return
-
-        if not ok:
-            notify(self, f'列配置修改失败: {msg}', 'warn')
-            return
-
-        # 刷新界面：列配置 / 表头 / 统计 / 详情
-        self.columns_config = new_columns_config
-        self.current_rowid = None
-        try:
-            self.sort_orders = {}
-            self._clear_layout(self.detail_layout)
-        except Exception:
-            pass
-
-        self.load_data()
-        self.status_bar.showMessage(f'✅ 列配置已更新（{msg}）', 8000)
-        notify(self, f'列配置修改成功\n\n{msg}\n（已自动备份数据库，数据已保留）', 'info')
     
     def show_help(self):
         """显示使用说明（来自 ProjectInfo.HELP_TEXT，修复死代码）"""
@@ -8219,7 +7294,7 @@ class MainWindow(QMainWindow):
                 os.remove("temp_qrcode.png")
                 
         except Exception as e:
-            notify(self, f'打印过程中发生错误: {str(e)}', 'error')
+            QMessageBox.critical(self, '打印错误', f'打印过程中发生错误: {str(e)}')
 
 
     def copy_item_detail(self, data):
@@ -8234,7 +7309,7 @@ class MainWindow(QMainWindow):
         
         clipboard = QApplication.clipboard()
         clipboard.setText(text)
-        notify(self, '数据已复制到剪贴板', 'info')
+        QMessageBox.information(self, '提示', '数据已复制到剪贴板')
 
     def validate_barcode(self, barcode_value):
         """
@@ -8467,7 +7542,7 @@ class MainWindow(QMainWindow):
         """导出选中行数据"""
         selected_rows = self.data_table.selectionModel().selectedRows()
         if not selected_rows:
-            notify(self, '请先选择要导出的行', 'warn')
+            QMessageBox.warning(self, '警告', '请先选择要导出的行')
             return
         
         # 获取选中行的rowid
@@ -8478,7 +7553,7 @@ class MainWindow(QMainWindow):
                 rowids.append(rowid_item.data(Qt.UserRole))
         
         if not rowids:
-            notify(self, '无法获取选中行的ID', 'warn')
+            QMessageBox.warning(self, '警告', '无法获取选中行的ID')
             return
         
         # 获取导出文件名
@@ -8499,7 +7574,7 @@ class MainWindow(QMainWindow):
                     data.append(row_data[1:])  # 跳过rowid
             
             if not data:
-                notify(self, '没有数据可导出', 'warn')
+                QMessageBox.warning(self, '警告', '没有数据可导出')
                 return
             
             # 获取列名
@@ -8511,9 +7586,9 @@ class MainWindow(QMainWindow):
                 writer.writerow(columns)
                 writer.writerows(data)
             
-            notify(self, f'已导出 {len(data)} 行数据到 {filename}', 'info')
+            QMessageBox.information(self, '成功', f'已导出 {len(data)} 行数据到 {filename}')
         except Exception as e:
-            notify(self, f'导出失败: {str(e)}', 'error')
+            QMessageBox.critical(self, '错误', f'导出失败: {str(e)}')
 
 
     def copy_selected_text(self):
@@ -8580,7 +7655,7 @@ class MainWindow(QMainWindow):
         """导出选中数据为CSV"""
         selected_rows = {item.row() for item in self.data_table.selectedItems()}
         if not selected_rows:
-            notify(self, '请先选择要导出的数据', 'warn')
+            QMessageBox.warning(self, '警告', '请先选择要导出的数据')
             return
         
         filename, _ = QFileDialog.getSaveFileName(
@@ -8611,15 +7686,15 @@ class MainWindow(QMainWindow):
                 writer.writerow(headers)
                 writer.writerows(data)
             
-            notify(self, f'已导出 {len(selected_rows)} 行数据到 {filename}', 'info')
+            QMessageBox.information(self, '成功', f'已导出 {len(selected_rows)} 行数据到 {filename}')
         except Exception as e:
-            notify(self, f'导出失败: {str(e)}', 'error')
+            QMessageBox.critical(self, '错误', f'导出失败: {str(e)}')
 
     def export_selected_to_json(self):
         """导出选中数据为JSON"""
         selected_rows = {item.row() for item in self.data_table.selectedItems()}
         if not selected_rows:
-            notify(self, '请先选择要导出的数据', 'warn')
+            QMessageBox.warning(self, '警告', '请先选择要导出的数据')
             return
         
         filename, _ = QFileDialog.getSaveFileName(
@@ -8650,15 +7725,15 @@ class MainWindow(QMainWindow):
             with open(filename, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
             
-            notify(self, f'已导出 {len(selected_rows)} 行数据到 {filename}', 'info')
+            QMessageBox.information(self, '成功', f'已导出 {len(selected_rows)} 行数据到 {filename}')
         except Exception as e:
-            notify(self, f'导出失败: {str(e)}', 'error')
+            QMessageBox.critical(self, '错误', f'导出失败: {str(e)}')
 
     def export_selected_images(self):
         """导出选中行的条形码/二维码图片"""
         selected_rows = {item.row() for item in self.data_table.selectedItems()}
         if not selected_rows:
-            notify(self, '请先选择要导出的行', 'warn')
+            QMessageBox.warning(self, '警告', '请先选择要导出的行')
             return
         
         path = QFileDialog.getExistingDirectory(self, "选择保存目录")
@@ -8698,9 +7773,9 @@ class MainWindow(QMainWindow):
                             img.save(filename)
                             exported_count += 1
             
-            notify(self, f"已导出 {exported_count} 张图片到：\n{path}", 'info')
+            QMessageBox.information(self, "成功", f"已导出 {exported_count} 张图片到：\n{path}")
         except Exception as e:
-            notify(self, f"导出失败：{str(e)}", 'error')
+            QMessageBox.critical(self, "错误", f"导出失败：{str(e)}")
 
     def get_cell_image(self, row, col):
         """获取单元格中的图像内容"""
@@ -8715,7 +7790,7 @@ class MainWindow(QMainWindow):
         """将选中内容复制为图片到剪贴板（包含条形码和二维码）"""
         selected_items = self.data_table.selectedItems()
         if not selected_items:
-            notify(self, '请先选择要复制的内容', 'warn')
+            QMessageBox.warning(self, '警告', '请先选择要复制的内容')
             return
         
         try:
@@ -8797,7 +7872,7 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage("已复制选中内容为图片", 2000)
         
         except Exception as e:
-            notify(self, f"复制为图片失败: {str(e)}", 'error')
+            QMessageBox.critical(self, "错误", f"复制为图片失败: {str(e)}")
 
 
 
@@ -8811,7 +7886,7 @@ class MainWindow(QMainWindow):
         self._retire_worker(getattr(self, 'backup_worker', None))
         self.backup_worker = BackupWorker(self.user_db.clone_for_thread(), backup_type="manual")
         self.backup_worker.finished.connect(lambda path: self._on_backup_finished(path))
-        self.backup_worker.error.connect(lambda e: notify(self, f'备份失败: {e}', 'warn'))
+        self.backup_worker.error.connect(lambda e: QMessageBox.warning(self, '警告', f'备份失败: {e}'))
         self.backup_worker.status.connect(lambda msg: self.status_bar.showMessage(msg))
         self.active_workers.append(self.backup_worker)
         self.backup_worker.start()
@@ -8822,10 +7897,10 @@ class MainWindow(QMainWindow):
         self._cleanup_finished_workers()
         if backup_path:
             self.status_bar.showMessage(f"数据库已备份到: {backup_path}")
-            notify(self, f'数据库已备份到:\n{backup_path}', 'info')
+            QMessageBox.information(self, '成功', f'数据库已备份到:\n{backup_path}')
         else:
             self.status_bar.showMessage("备份失败")
-            notify(self, '备份失败', 'warn')
+            QMessageBox.warning(self, '警告', '备份失败')
     
     def show_restore_dialog(self):
         """显示恢复备份对话框"""
@@ -8960,10 +8035,10 @@ class MainWindow(QMainWindow):
                                    QMessageBox.Yes | QMessageBox.No)
         if reply == QMessageBox.Yes:
             if self.user_db.restore_from_backup(backup_path):
-                notify(self, '数据库恢复成功!\n请重新启动应用使更改生效。', 'info')
+                QMessageBox.information(self, '成功', '数据库恢复成功!\n请重新启动应用使更改生效。')
                 self.close()
             else:
-                notify(self, '数据库恢复失败', 'warn')
+                QMessageBox.warning(self, '警告', '数据库恢复失败')
 
 
 
@@ -9687,7 +8762,7 @@ class MainWindow(QMainWindow):
         if progress_dialog:
             progress_dialog.close()
         self.status_bar.showMessage(f"导入失败: {error_msg}")
-        notify(self, f'导入失败: {error_msg}', 'error')
+        QMessageBox.critical(self, '错误', f'导入失败: {error_msg}')
 
         
     def preprocess_import_data(self, data, mapping):
@@ -10083,9 +9158,9 @@ class MainWindow(QMainWindow):
                     
             except Exception as e:
                 print(f"[DEBUG] 导入文件 {filename} 失败: {str(e)}")
-                notify(self, f'导入文件 {os.path.basename(filename)} 失败: {str(e)}', 'error')
+                QMessageBox.critical(self, '错误', f'导入文件 {os.path.basename(filename)} 失败: {str(e)}')
         
-        notify(self, f'已开始导入 {len(filenames)} 个文件，导入完成后将自动刷新数据', 'info')
+        QMessageBox.information(self, '提示', f'已开始导入 {len(filenames)} 个文件，导入完成后将自动刷新数据')
 
 
 
@@ -10216,7 +9291,7 @@ class MainWindow(QMainWindow):
         if use_unified and processed_files > 1:
             result_msg += f"\n\n✅ 已应用统一配置到所有文件"
         
-        notify(self, result_msg, 'info')
+        QMessageBox.information(self, '批量导入结果', result_msg)
         self.load_data()
 
     def batch_ultra_fast_import_enhanced(self):
@@ -10386,11 +9461,11 @@ class MainWindow(QMainWindow):
             if processed_files > 1:
                 result_msg += f"\n\n✅ 已应用统一配置到所有文件"
             
-            notify(self, result_msg, 'info')
+            QMessageBox.information(self, '无人值守导入结果', result_msg)
             self.load_data()
             
         except Exception as e:
-            notify(self, f'无人值守批量导入失败: {str(e)}', 'error')
+            QMessageBox.critical(self, '错误', f'无人值守批量导入失败: {str(e)}')
 
 
 
@@ -10514,11 +9589,11 @@ class MainWindow(QMainWindow):
             if processed_files > 1:
                 result_msg += f"\n\n✅ 已应用统一配置到所有文件"
             
-            notify(self, result_msg, 'info')
+            QMessageBox.information(self, '无人值守导入结果', result_msg)
             self.load_users()
             
         except Exception as e:
-            notify(self, f'无人值守批量导入失败: {str(e)}', 'error')
+            QMessageBox.critical(self, '错误', f'无人值守批量导入失败: {str(e)}')
 
     def batch_ultra_fast_import_with_cleanup(self, filenames):
         """交互式批量导入，每次导入后清理状态"""
@@ -10568,7 +9643,7 @@ class MainWindow(QMainWindow):
         # 显示批量导入结果
         result_msg = f"⚡📥批量导入完成！\n\n总共处理 {len(filenames)} 个文件\n成功导入 {processed_files} 个文件\n成功记录: {total_success} 条\n失败记录: {total_errors} 条"
         
-        notify(self, result_msg, 'info')
+        QMessageBox.information(self, '批量导入结果', result_msg)
         self.load_users()
 
     def show_data_management_dialog(self):
@@ -10642,7 +9717,7 @@ class MainWindow(QMainWindow):
         if condition_text == '归档特定条件的数据':
             condition = custom_condition.text().strip()
             if not condition:
-                notify(self, '请输入归档条件', 'warn')
+                QMessageBox.warning(self, '警告', '请输入归档条件')
                 return
         else:
             # 根据选择的条件生成SQL条件
@@ -10659,7 +9734,7 @@ class MainWindow(QMainWindow):
         
         if reply == QMessageBox.Yes:
             archived_count = self.user_db.archive_old_data(condition)
-            notify(self, f'已归档 {archived_count} 条记录', 'info')
+            QMessageBox.information(self, '成功', f'已归档 {archived_count} 条记录')
             self.load_data()
 
     def cleanup_duplicate_data(self):
@@ -10762,7 +9837,7 @@ class MainWindow(QMainWindow):
             preview_btn = QPushButton('🔍 预览重复数据')
             def on_preview():
                 if not selected_fields:
-                    notify(self, '请至少选择一个字段', 'warn')
+                    QMessageBox.warning(self, '警告', '请至少选择一个字段')
                     return
                 self.preview_duplicates(selected_fields)
             preview_btn.clicked.connect(on_preview)
@@ -10773,7 +9848,7 @@ class MainWindow(QMainWindow):
             start_btn = QPushButton('🚀 开始清理')
             def on_cleanup():
                 if not selected_fields:
-                    notify(self, '请至少选择一个字段', 'warn')
+                    QMessageBox.warning(self, '警告', '请至少选择一个字段')
                     return
                 self.execute_duplicate_cleanup(
                     selected_fields, 
@@ -10799,7 +9874,7 @@ class MainWindow(QMainWindow):
                 pass
                 
         except Exception as e:
-            notify(self, f'清理重复数据失败: {str(e)}', 'error')
+            QMessageBox.critical(self, '错误', f'清理重复数据失败: {str(e)}')
 
     def estimate_duplicate_count(self, fields):
         """估算重复数据数量"""
@@ -10828,7 +9903,7 @@ class MainWindow(QMainWindow):
     def preview_duplicates(self, fields):
         """预览重复数据"""
         if not fields:
-            notify(self, '请先选择去重字段', 'warn')
+            QMessageBox.warning(self, '警告', '请先选择去重字段')
             return
             
         try:
@@ -10850,7 +9925,7 @@ class MainWindow(QMainWindow):
             duplicates = self.user_db.cursor.fetchall()
             
             if not duplicates:
-                notify(self, '未发现重复数据', 'info')
+                QMessageBox.information(self, '预览', '未发现重复数据')
                 return
             
             # 显示预览对话框
@@ -10888,12 +9963,12 @@ class MainWindow(QMainWindow):
             dialog.exec()
             
         except Exception as e:
-            notify(self, f'预览重复数据失败: {str(e)}', 'error')
+            QMessageBox.critical(self, '错误', f'预览重复数据失败: {str(e)}')
 
     def execute_duplicate_cleanup(self, fields, retention_strategy, time_field, preview_first, create_backup, parent_dialog):
         """执行重复数据清理"""
         if not fields:
-            notify(self, '请至少选择一个字段', 'warn')
+            QMessageBox.warning(self, '警告', '请至少选择一个字段')
             return
         
         try:
@@ -10914,22 +9989,25 @@ class MainWindow(QMainWindow):
             if create_backup:
                 backup_path = self.user_db.backup_database(backup_type="cleanup")
                 if not backup_path:
-                    notify(self, '备份创建失败，是否继续？', 'warn')
+                    QMessageBox.warning(self, '警告', '备份创建失败，是否继续？')
             
             # 执行清理
             deleted_count = self.perform_duplicate_cleanup(fields, retention_strategy, time_field)
             
             # 显示结果
-            notify(self, f'重复数据清理完成！\n\n'
+            QMessageBox.information(
+                self, '清理完成',
+                f'重复数据清理完成！\n\n'
                 f'删除的重复记录数: {deleted_count}\n'
-                f'剩余唯一记录数: {self.user_db.get_data_count()}', 'info')
+                f'剩余唯一记录数: {self.user_db.get_data_count()}'
+            )
             
             # 关闭对话框并刷新数据
             parent_dialog.accept()
             self.load_data()
             
         except Exception as e:
-            notify(self, f'清理重复数据失败: {str(e)}', 'error')
+            QMessageBox.critical(self, '错误', f'清理重复数据失败: {str(e)}')
 
     def perform_duplicate_cleanup(self, fields, retention_strategy, time_field):
         """执行实际的重复数据清理"""
@@ -10967,7 +10045,7 @@ class MainWindow(QMainWindow):
                     if time_fields:
                         time_field = time_fields[0]['name']
                     else:
-                        notify(self, '未找到时间字段，使用默认策略', 'warn')
+                        QMessageBox.warning(self, '警告', '未找到时间字段，使用默认策略')
                         return self.perform_duplicate_cleanup(fields, '保留最后一条记录', '')
                 
                 sql = f'''
@@ -11039,9 +10117,9 @@ class MainWindow(QMainWindow):
         try:
             self.user_db.cursor.execute("VACUUM")
             self.user_db.conn.commit()
-            notify(self, '数据库优化完成', 'info')
+            QMessageBox.information(self, '成功', '数据库优化完成')
         except Exception as e:
-            notify(self, f'数据库优化失败: {str(e)}', 'error')
+            QMessageBox.critical(self, '错误', f'数据库优化失败: {str(e)}')
 
 
 class EditDataDialog(QDialog):
@@ -11117,7 +10195,7 @@ class EditDataDialog(QDialog):
                     widget.setStyleSheet("background-color: #FFCDD2;")
         
         if errors:
-            notify(self, '\n'.join(errors), 'warn')
+            QMessageBox.warning(self, '输入错误', '\n'.join(errors))
             return False
         return True
     
