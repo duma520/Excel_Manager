@@ -7,11 +7,11 @@ import csv
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                             QLabel, QLineEdit, QPushButton, QTableWidget, QTableWidgetItem,
                             QMessageBox, QComboBox, QTabWidget, QFormLayout, QGroupBox,
-                            QInputDialog, QListWidget, QAbstractItemView, QHeaderView,
+                            QInputDialog, QListWidget, QListWidgetItem, QAbstractItemView, QHeaderView,
                             QDialog, QCheckBox, QFileDialog, QStatusBar, QMenu,
                             QToolBar, QSizePolicy, QSpacerItem, QSplitter, QTextEdit,
                             QScrollArea, QDateEdit, QSpinBox, QProgressDialog,
-                            QRadioButton)
+                            QRadioButton, QTreeWidget, QTreeWidgetItem)
 from PySide6.QtGui import (QIcon, QPixmap, QImage, QFont, QTextDocument, QColor, QPainter, 
                            QAction, QKeySequence, QShortcut)
 from PySide6.QtCore import Qt, QSize, QTimer, QRect, QDate, QThread, Signal, QObject, QThreadPool, QRunnable
@@ -463,8 +463,8 @@ class BarcodeGenerator(BaseWorker):
 
 class ProjectInfo:
     """项目信息元数据（集中管理所有项目相关信息）"""
-    VERSION = "6.8"
-    BUILD_DATE = "2026-09-24"
+    VERSION = "6.22"
+    BUILD_DATE = "2026-09-28"
     AUTHOR = "杜玛"
     LICENSE = "GNU Affero General Public License v3.0"
     COPYRIGHT = "© 永久 杜玛"
@@ -500,7 +500,21 @@ class ProjectInfo:
         "6.5": "登录后也能修改列配置：主窗口「工具→🧩修改列配置」与「🛠️用户设置」窗口里的按钮均可修改当前用户列配置（与登录窗口入口共用同一套「备份+迁移表结构+保存配置」流程，数据保留），改完自动刷新表头/统计/详情。",
         "6.6": "添加数据后自动翻到最新行：新记录添加成功并刷新列表后，表格自动滚动到最后一行（最新记录）并选中它，无需再手动往下拖；仅「添加数据」触发，刷新/搜索/导入等其它刷新不受影响。",
         "6.7": "修复「增加列后全是 None、还以为数据没了，重开后添加不了数据」：①列配置改以数据库真实表结构为准（启动、录入前、打开列配置前自动校正，并把 users.settings 回写一致），不再因“设置与表结构分裂”而显示错位或报 table data has no column named xxx；②修改列配置的迁移不再静默清空 —— 旧版“一列都对不上就只保留记录条数”会把整表值清成 NULL（实测丢过 70 条），现改为位置兜底保住数据、真对不上就直接中止；③迁移后核对表结构是否真等于新配置；④确认框直接列出「保留数据的列/新增列/会被删除的列」；⑤表格取值改按列名、NULL 显示为空串（不再显示 None）；⑥列配置对话框不允许删到最后一列、新列默认名不再重复。",
-        "6.8": "按用户要求把所有提示改到状态栏（不弹窗打断）：全文件 146 处 QMessageBox.information/warning/critical 统一改为 notify() —— 成功/信息走状态栏临时消息，警告/错误走状态栏右侧常驻提示（不会被常规状态刷新盖掉，点击可清除，完整原文在 tooltip，并按级别用绿/橙/红色）；弹着对话框时顺带闪一下标题；实在找不到状态栏才退回**非阻塞**弹窗。需要用户「是/否」决定的确认框（QMessageBox.question，删除/覆盖/退出等 11 处）仍然保留。"
+        "6.8": "按用户要求把所有提示改到状态栏（不弹窗打断）：全文件 146 处 QMessageBox.information/warning/critical 统一改为 notify() —— 成功/信息走状态栏临时消息，警告/错误走状态栏右侧常驻提示（不会被常规状态刷新盖掉，点击可清除，完整原文在 tooltip，并按级别用绿/橙/红色）；弹着对话框时顺带闪一下标题；实在找不到状态栏才退回**非阻塞**弹窗。需要用户「是/否」决定的确认框（QMessageBox.question，删除/覆盖/退出等 11 处）仍然保留。",
+        "6.9": "条形码编码格式与 Code128 子集可逐列设置：在「新建用户」和「工具→修改列配置」两处，都可为每个勾选「条形码」的列选择编码格式（自动/Code128/EAN13/EAN8/UPC-A/Code39）与 Code128 子集（自动/A/B/C）。格式与子集随列配置存进库（barcode_format_* / barcode_subset_*），表格显示、详情查看、图片导出、HTML 报告全部按该列的设置出码；数据不满足所选格式时自动回退 Code128 并给出提示，不会出现“条码空白”。",
+        "6.10": "新增「👁️显示列设置」：数据列表可以选择只显示其中几列（工具菜单 / 用户设置窗口 / 表格右键 / 表头右键四个入口，表头右键还可一键隐藏当前列或恢复全部显示）。隐藏只影响显示——数据照常录入、保存、搜索、导出，详情/打印/复制依旧是完整数据；设置存在本用户库的 config 表里（hidden_columns），下次打开还是这套显示列，数据统计也只统计显示的列。",
+        "6.11": "修复「登录窗口跑到屏幕外，连拖都拖不回来」：窗口恢复上次位置前先用 safe_window_geometry() 校验是否还在屏幕可见范围内（换了分辨率/拔了外接显示器/远程桌面都会导致旧坐标越界），越界或首次运行就居中到主屏幕；主窗口用同一套校验。",
+        "6.12": "修复「程序窗口都顶出屏幕了」的真正根因——窗口位置每启动一次就往上顶 31px：Windows 上 setGeometry() 摆的是客户区坐标，而 x()/y()（存进设置里的值）是含标题栏的边框坐标，两者恒定差一个标题栏高度，于是“存→取→摆”每轮把窗口推进屏幕外一点（实测 main_geometry 已漂到 y=-31）。现改为 resize()+move() 摆放（与 x()/y() 同坐标系，零漂移）；存盘改用 window_geometry_for_save()：最大化时存 normalGeometry()（不再存 -8/-31 残影）并保证存的坐标一定看得见；窗口显示后再用 ensure_window_on_screen() 按真实边框兜一底（够不着就拉回屏幕中间）；窗口比屏幕还大时自动缩到屏幕内（整窗夹取）；新增「工具→🪟窗口位置重置（居中显示）」(Ctrl+Alt+C) 作为手动救回入口。",
+        "6.13": "「显示列设置」里也能单独勾选条形码/二维码图列了（用户：「条形码，二维码 这些也要列进去，如果有的话」）：数据列表里那两列图片以前只能跟着来源列一起显示/隐藏，现在在清单里单独成一项（显示成「××条形码 (条形码图 · 来自「××」)」），键＝列名#barcode / 列名#qrcode，和数据列名一起存在用户库 config 的 hidden_columns 里；取消勾选只影响数据列表里那张图（数据列、详情、打印、复制、导出仍旧完整）；表头右键「隐藏这一列」对图列同样有效；对话框统计改为「共 N 项（X 列 + Y 张图）」；列改名/删列后残留的图列键会自动清理。",
+        "6.14": "表头排序改成三态循环：升序 → 降序 → 默认（不排序）（用户：「点表头排序，除了正反排序，还要有默认排序，就是不排序」）。① 排序状态按【数据列名】记（不按列序号），隐藏列/增减列也不会排错列；② 排序改在【数据层】做（渲染前对整份数据排一遍），不再原地改单元格文本——老实现不搬 Qt.UserRole 里的 rowid，排完序后再编辑/删除会动错行（真 bug，已修）；③ 第三下回到默认排序＝数据库原始顺序，并清掉表头箭头（原来第三下的箭头一直留着，看着像没生效）；④ 数字列按数值比（1/2/10 而不是 1/10/2），空值永远排最后；⑤ 关掉 Qt 内置排序（否则点表头它自己也会排一次，和三态打架）；⑥ 排序状态在刷新/搜索后保持，搜索后点表头是在搜索结果里排（不再把搜索结果丢掉）。",
+        "6.15": "关闭就是关闭，换人登录改用新增的「👤切换用户登录」（用户：「点程序关闭就关闭，不用返回到登录窗口。程序增加切换用户登录就可以了」）：① MainWindow.closeEvent 不再无条件把登录窗口又显示回来（原来点关闭只是回到登录窗口、程序不退出），现在保存设置/停线程/自动备份/关库之后直接退出程序（显式 app.quit()，避免登录窗口隐身后进程残留）；② 文件菜单：「🚪退出登录」→「👤切换用户登录」（switch_user()，旧名 logout() 保留为别名），「🚪退出」→「❌退出程序」；③ LoginWindow.showEvent 每次显示都刷新用户列表（切回来立刻看到最新用户）；④ 帮助文档同步。",
+        "6.16": "「详细信息」页新增翻页（用户：「详细信息增加 向上和向下翻，就不用每次都回到列表点才能看详细，直接详细就可以直接下一个，或者上一个」）：详情页顶部常驻「⬆ 上一条 / ⬇ 下一条」+「第 N / M 条」位置提示 + 「📊 回到列表」；快捷键 Alt+↑ / Alt+↓（只在详情页生效）。翻页时**列表的选中行跟着同步**（回到列表位置对得上），到头时按钮置灰并在状态栏提醒（不绕回另一头）；show_item_detail() 现在支持 index=（双击路径）或 row=（翻页路径）两种调用，表未渲染/未选中/无数据时安全返回。",
+        "6.17": "Code128 子集改成「装得进就按你选的出码，装不进才回退自动」（用户：「Code128，C，就是列设置是这种的，符合的都改成用户要求的，不符合的才改成自动」）：① 子集 C 不再要求偶数位 —— 纯数字一律用 C（偶数位全程 C；奇数位按 Code128 规范让最后一位转一次 B，否则那一位会被丢掉），只有含非数字字符才回退「自动」（首尾空格不参与判断）；② 只有 ASCII 的 0-9 才算「纯数字」（全角「１２３４」、上标「²²」以前被 str.isdigit() 当成数字，结果 Code128 编不出来变成空白条码）；③ 修掉上游 python-barcode 的一个真 bug —— 它的 _try_to_optimize() 会把「起始符后面的第一个码」当成切换码合并，而 99 在 C 里其实是数据对「99」，所以 **「99」开头的数字（如 9912345678）会被静默吃掉两位**；锁定子集时不再合并，auto 走纯数字时也用同一实现，一并修好；④ 同一对象重复出码结果不再变（出码前复位字符集/缓冲区）。",
+        "6.18": "不符合所选 Code128 子集的值用【字体颜色】标出来（用户：「不符合 Code128 C 的，可以用颜色标记出来，因为背景色已经是固定的，改背景色会设计太多东西，所以应该是字体颜色不一样，而且要跟背景色有反差，否则连字都看不清」）：数据列表里凡是装不进该列所选 Code128 子集（A/B/C）的值，字体改成深红 #8B0000（对 5 种马卡龙行底色的 WCAG 对比度最低 6.41:1，普通文字是 8.09，都远高于 AA 要求的 4.5:1），鼠标悬停有 tooltip 说明原因（例如“Code128-C 只支持纯数字，这个值里还有「-ABC」这类非数字字符，出码时会自动回退为「自动」子集”）；**只改字体颜色、不碰背景色**（背景是固定的马卡龙交替行色）。子集选「自动」的列、EAN13/EAN8/UPC-A/Code39 列、空值都不标；数据列表、搜索结果、排序后重新渲染都会标（跟着值走，不跟着行号）。",
+        "6.19": "把「这张条码实际是用什么出的」直接显示出来（回答用户问的「一维码 为什么没有实现 code128 C 子集方式？」—— 光看条码图根本看不出来）：① 新增 `barcode_display_text()` 把「非 ASCII → 拼音首字母_6位哈希」的转换从 generate_barcode 里抽出来做单一来源（说明与实际出码共用同一段）；② 新增 `describe_barcode_encoding()`：真的构建一次条码对象、看【起始符】来判断实际子集，输出如「Code128-C 全程 C 子集（起始符 105）」「Code128-C，中间切了一次 B（起始符 105）—— 奇数位数字，规范要求」「Code128 自动切换（起始符 104）：所选 C 子集装不下，已回退」「EAN13」；③ 表格/搜索结果/未展示的旧搜索路径的条码图上悬停可见，详细信息页在条码图下面直接写一行「编码：…」。这样“到底有没有按我选的 C 出码”不用再猜。",
+        "6.20": "「不符合所选 Code128 子集」的**一维码图**改用浅红底标出来（用户：「一维码背景色不是白色的吗，如果改一维码 不符合Code128 编码的C子集，就用其他背景色」）：条码图本身是白底（行底色被图片完全盖住、用户根本看不见），所以不符合子集的那张图直接渲染成**浅红底 #FFCDD2**（黑条对比度≈14:1，扫描毫无影响），图片控件的底色也跟着换；**只影响屏幕上画的图，导出/打印仍是白底**（扫描最安全、也不会把颜色印到标签上）。新增模块级 `BARCODE_MISMATCH_BG_COLOR()` / `barcode_background_for()`，`generate_barcode()` 多一个 `background` 参数（None＝白底，旧调用不受影响）。",
+        "6.21": "修好「Code128 C 扫不出来」（用户：「我有个程序需要扫 code128 C 才能识别…可以肯定是现在这个程序里面生成的 C 子集还是有问题」）：**编码本身没错**（新测试把出图逐模块比对标准码表，全对；起始符 105、校验符按规范算），真因是 **`generate_barcode()` 把图统一缩到高 100px** —— 10 位数字的 C 条码有 90 个模块，被压成 97x100px 后每根黑条只剩 **1px**、插值还糊出 37 个灰度像素、黑条从 **25 根掉到 21 根**，扫描器根本读不出来（同一值走 B 子集出图 402px 宽、条更稀，勉强能读 ⇒ 看起来就像「C 子集坏了」）。修法：**不再缩放位图，改成直接提高 dpi 出图**（dpi=300*scale，模块宽度=mm*dpi/25.4，条宽永远是整数像素、零灰度）：详情页/导出图片/批量导出/打印报告四个地方用 `BARCODE_RENDER_SCALE=2`（每模块 4.7px、10 位 C 图 545px 宽，屏幕直接对着扫就能读）；表格里保持旧观感用 `barcode_preview_pixmap()` 缩略图（高仍 100px、行高不变），**并且【双击那张条码图】会弹出放大窗口**（`BarcodeZoomLabel` + `BarcodeZoomDialog`，可另存为 PNG 交给别家程序读）。新增回归测试 `_scaffold\\smoke_test_barcode_size.py`（44 项，含逐模块解码 + 源码守卫）。",
+        "6.22": "新增「🔎详细信息显示设置」（用户：「设置 增加 详细信息，哪些可以暂时不显示，就好像之前哪些列不显示一样的逻辑，因为有时候可能只需要显示一些信息，包括可能只需要显示二维码或者一维码 或者 哪些信息，可能不需要全部都显示。」）：详细信息页也像「显示列」一样挑着显示。**可以逐项勾选**：基本信息里的每个字段（键 `field:<列名>`）、每一列的条形码块（`barcode:<列名>`）、每一列的二维码块（`qrcode:<列名>`）；清单里三组各有父节点，勾一下＝整组开关；另有六个快捷按钮「✅全部显示 / 🚫全部隐藏 / 🔁反选 / 📋只看基本信息 / ▮只看一维码 / ▦只看二维码」。设置存本用户库 config 表的 `hidden_detail_items`（存**被隐藏**的键、空＝全部显示），与「显示列设置」同一套逻辑；**只影响「🔎详细信息」页画不画** —— 数据列表、录入编辑、搜索、数据统计、打印、复制、导出依旧完整；列改名/删列后残留的旧键会自动清理；一项都不勾不让确定（免得详情页整页空着）。入口三个：工具菜单「🔎详细信息显示设置」、用户设置窗口按钮、详细信息页顶部「👁️ 显示设置」按钮。"
     }
     HELP_TEXT = """
 数据管理系统使用说明
@@ -509,31 +523,63 @@ class ProjectInfo:
    - 首次使用需要创建用户
    - 每个用户可以配置独立的数据库结构
    - 支持多用户同时使用
+   - 换人登录: 文件 → 👤切换用户登录(回到登录窗口, 程序不退出)
+   - 关闭程序: 点窗口右上角 ✕ 或 文件 → ❌退出程序(就是退出, 不再回登录窗口)
 
 2. 数据操作
    - 添加数据: 点击工具栏"+"按钮或按Ctrl+N
    - 编辑数据: 双击表格行或右键选择"编辑"
    - 删除数据: 选中行后右键选择"删除"或按Delete键
    - 搜索数据: 在搜索框输入关键词后回车或点击搜索按钮
+   - 详细信息翻页: 详情页顶部「⬆上一条 / ⬇下一条」(Alt+↑/Alt+↓), 看完直接下一条
+   - 表头排序: 点表头循环 升序 → 降序 → 默认(不排序), 箭头表示当前方向
 
 3. 条形码/二维码功能
    - 在列配置中勾选"条形码"或"二维码"选项
-   - 支持EAN13标准条形码(13位数字)
+   - 条形码可逐列选择编码格式: 自动 / Code128 / EAN13 / EAN8 / UPC-A / Code39
+   - Code128 还可指定子集: A(大写+数字+控制符) B(大小写+数字+符号) C(纯数字,任意位数)
+   - 能装进所选子集就按你的设置出码, 装不进(如C里放字母)才回退为"自动"
+   - 装不进的值: 文字用【深红字体】、它那张一维码图用【浅红底】(悬停看原因)
+   - 只影响屏幕上的显示: 条码导出/打印仍是白底(扫描最安全), 数据底色也不变
+   - 想看某张条码实际用的是哪种子集: 鼠标悬停条码图(详情页会直接写在图下面,
+     例如“Code128-C 全程 C 子集（起始符 105）”)
+   - 表格里的条码是缩略图(太小扫不出来): 【双击那张条码图】弹出放大窗口,
+     放大后的图可以直接对着屏幕扫, 也能「另存为 PNG」交给别的程序读;
+     详细信息页/导出的图片/打印报告用的也都是放大后的清晰图
+   - 新建用户时和以后右键"修改列配置"时都能改这两项
+   - 数据不符合所选格式时会自动回退为 Code128, 不会出现空白条码
    - 支持任意文本生成二维码
 
-4. 数据导出
+4. 显示设置（只想显示一部分时用）
+   4.1 数据列表显示哪些列
+   - 入口: 「工具→👁️显示列设置」、「用户设置」窗口里的按钮、表格右键、表头右键
+   - 勾选要显示的列; 取消勾选的列只是不在数据列表里显示
+   - 条形码/二维码 图列也在这个清单里(要是有的话), 可以单独勾选
+   - 只影响显示: 数据照常录入、保存、搜索、导出, 详情/打印/复制仍是完整数据
+   - 设置存在当前用户的库里, 下次打开还是这套显示列
+   - 想恢复全部显示: 表头右键「✅ 全部显示」
+   4.2 详细信息显示哪些项目
+   - 入口: 「工具→🔎详细信息显示设置」、「用户设置」窗口里的按钮、
+     详细信息页顶部「👁️ 显示设置」按钮
+   - 可以逐项勾选: 基本信息里的每个字段、每一列的条形码、每一列的二维码
+   - 常用场景有快捷按钮: 只看基本信息 / 只看一维码 / 只看二维码 / 全部显示 / 反选
+   - 组名(基本信息/条形码/二维码)上点一下 = 整组一起开关
+   - 只影响「详细信息」页显示: 数据列表、录入编辑、搜索、统计、打印、复制、导出都不变
+   - 至少要勾一项才能确定(避免详情页整页空着); 设置同样存在当前用户的库里
+
+5. 数据导出
    - 支持导出为CSV文件
    - 支持打印数据详情
    - 支持导出条形码/二维码为图片
 
-5. 快捷键
+6. 快捷键
    - Ctrl+N: 添加新数据
    - Ctrl+F: 搜索
    - Ctrl+E: 编辑选中数据
    - Delete: 删除选中数据
    - F5: 刷新数据
 
-6. 技术支持
+7. 技术支持
    - 作者: {cls.AUTHOR}
    - 版本: {cls.VERSION}
    - 项目地址: {cls.URL}
@@ -620,6 +666,237 @@ def save_global_settings(data):
         return True
     except Exception as e:
         print(f"[DEBUG] 保存全局设置失败: {e}")
+        return False
+
+
+# ===== 窗口位置安全（★ v6.11 起；v6.12 修掉「每启动一次往上顶 31px」的漂移）=====
+def _screen_available_rects():
+    """当前所有屏幕的可用区域列表（拿不到屏幕信息时返回空列表）"""
+    rects = []
+    try:
+        app = QApplication.instance()
+        if app is None:
+            return rects
+        for screen in app.screens():
+            try:
+                rects.append(screen.availableGeometry())
+            except Exception:
+                continue
+    except Exception as e:
+        print(f"[DEBUG] 读取屏幕信息失败: {str(e)}")
+    return rects
+
+
+def safe_window_geometry(saved_geo, default_size=(600, 400), min_visible=120,
+                         always_center=False):
+    """算一个「一定看得见、抓得住」的窗口几何 (x, y, w, h)，拿不到屏幕信息时返回 None（★ v6.11）
+
+    用户报过：**登录窗口跑到屏幕外，连拖都拖不回来**（鼠标抓不到标题栏，只能去删
+    配置文件）。查了他真实的 `excel_manager_settings.json`：
+        "login_geometry": [903, -64, 823, 400]
+    —— y = **-64**，窗口上边缘（标题栏）跑到屏幕上边之外了，所以看也不是、拖也不是。
+    根因是全局设置存的是上次的坐标，换分辨率 / 多显示器 / 远程桌面 / 缩放比例变化后，
+    那组坐标就不在可见范围里，直接 setGeometry 就把窗口“送”出去。
+
+    规则：
+      * `always_center=True`（登录窗口用）→ 尺寸沿用保存的（合理时），**位置一律居中**；
+      * 否则保存的坐标要**够得着**才沿用：窗口上边缘不能在屏幕上方之外（否则抓不到
+        标题栏），且横向至少露出 `min_visible` 像素、纵向至少露出 40 像素；
+      * 够不着 / 没保存 → 用保存的尺寸（不合理就用 default_size）**居中到主屏幕**。
+      * ★ v6.12：够得着的坐标再做一次**整窗夹取** —— 窗口不能被摆到只露出一部分
+        （右边/下边够不着也等于不能用），窗口比屏幕还大时就按屏幕可用尺寸缩下来。
+
+    ★ 注意：这里算出来的是**窗口边框坐标**（与 `x()`/`y()`/`frameGeometry()` 同一
+    坐标系）—— 摆回去**必须用 `place_window()`（resize + move）**，不能用
+    `setGeometry()`（那是客户区坐标，会每次把窗口往上顶一个标题栏高度）。
+    """
+    try:
+        rects = _screen_available_rects()
+        width, height = int(default_size[0]), int(default_size[1])
+        saved = None
+        if saved_geo and len(saved_geo) == 4:
+            try:
+                x, y, w, h = (int(v) for v in saved_geo)
+                saved = (x, y, w, h)
+                if w >= 200 and h >= 150:
+                    width, height = w, h
+            except (TypeError, ValueError):
+                saved = None
+
+        if saved is not None and not always_center:
+            x, y = saved[0], saved[1]
+            if not rects:
+                # 连屏幕信息都拿不到（启动极早期等），不折腾，保持原样
+                return (x, y, width, height)
+            for area in rects:
+                # ① 标题栏必须够得着：窗口上边缘不能跑到屏幕上方之外
+                if y < area.top():
+                    continue
+                if y > area.bottom() - 40:
+                    continue
+                # ② 横向至少露出 min_visible 像素（能点得到、拖得动）
+                visible_w = min(x + width, area.right() + 1) - max(x, area.left())
+                if visible_w < min_visible:
+                    continue
+                # ③ 纵向至少露出 40 像素（就是标题栏那一条）
+                visible_h = min(y + height, area.bottom() + 1) - max(y, area.top())
+                if visible_h < 40:
+                    continue
+                # ★ v6.12：够得着就沿用，但整窗要夹进这块屏幕 —— 窗口比屏幕还大时
+                #   按屏幕尺寸缩下来，避免右边/下边永远够不着（也是“顶出屏幕”的一种）
+                fit_w = min(width, area.width())
+                fit_h = min(height, area.height())
+                fit_x = min(max(x, area.left()), area.right() + 1 - fit_w)
+                fit_y = min(max(y, area.top()), area.bottom() + 1 - fit_h)
+                if (fit_x, fit_y, fit_w, fit_h) != (x, y, width, height):
+                    print(f"[DEBUG] 窗口上次的位置/尺寸超出屏幕，已夹取 "
+                          f"{(x, y, width, height)} -> {(fit_x, fit_y, fit_w, fit_h)}")
+                return (fit_x, fit_y, fit_w, fit_h)
+            print(f"[DEBUG] 窗口上次的位置够不着（{list(saved)}），改为居中显示")
+
+        if not rects:
+            return None
+        area = None
+        try:
+            app = QApplication.instance()
+            screen = app.primaryScreen() if app is not None else None
+            area = screen.availableGeometry() if screen is not None else None
+        except Exception:
+            area = None
+        if area is None or area.isEmpty():
+            area = rects[0]
+        width, height = min(width, area.width()), min(height, area.height())
+        x = area.x() + max(0, (area.width() - width) // 2)
+        y = area.y() + max(0, (area.height() - height) // 2)
+        return (x, y, width, height)
+    except Exception as e:
+        print(f"[DEBUG] 计算安全窗口位置失败: {str(e)}")
+        return None
+
+
+def center_window_on_screen(window):
+    """把窗口摆到所在屏幕可用区域的正中间（★ v6.11，返回是否成功）"""
+    if window is None:
+        return False
+    try:
+        app = QApplication.instance()
+        if app is None:
+            return False
+        screen = window.screen() or app.primaryScreen()
+        if screen is None:
+            return False
+        area = screen.availableGeometry()
+        if area.isEmpty():
+            return False
+        frame = window.frameGeometry()
+        frame.moveCenter(area.center())
+        window.move(frame.topLeft())
+        return True
+    except Exception as e:
+        print(f"[DEBUG] 窗口居中失败: {str(e)}")
+        return False
+
+
+def place_window(window, geo):
+    """按 (x, y, w, h) 摆放窗口（★ v6.12，返回是否成功）
+
+    ★★ 为什么必须用 resize + move，**不能用 setGeometry**（真机实测，勿改回）：
+        在 Windows 上 setGeometry(x, y, w, h) 摆的是**客户区**，而
+        `x()`/`y()`/`frameGeometry()`（以及本程序存进设置里的值）是**窗口边框**
+        坐标，两者恒定相差一个标题栏高度。实测（本机 31px）：
+
+            setGeometry(560, 120, 800, 800)  →  x()/y() == (560, 89)
+            resize(800,800) + move(560, 120) →  x()/y() == (560, 120)   ✅
+
+        于是「存 x()/y() → 下次 setGeometry 摆回」每启动一次就把窗口往上顶
+        31px，跑几轮标题栏就跑到屏幕上边之外 —— 用户真实的
+        `main_geometry=[396, -31, 800, 800]` 就是这么一步步顶上去的
+        （y=-31 正好是一个标题栏的高度，v6.11 的居中每跑一次也会再顶 31px，
+        所以那个版本看起来“修了又犯”）。
+
+        `move()` 与 `x()`/`y()` 完全同坐标系（show 之前/之后都一样，已实测），
+        所以「存 → 取 → 摆」零漂移。
+    """
+    if window is None or not geo:
+        return False
+    try:
+        x, y, width, height = (int(v) for v in geo)
+    except (TypeError, ValueError):
+        return False
+    try:
+        window.resize(width, height)
+        window.move(x, y)
+        return True
+    except Exception as e:
+        print(f"[DEBUG] 摆放窗口失败: {str(e)}")
+        return False
+
+
+def window_geometry_for_save(window, default_size=(800, 800)):
+    """取一个适合写进设置的窗口几何 [x, y, w, h]（★ v6.12）
+
+    ① 最大化/全屏时改用 `normalGeometry()`：直接读 `x()`/`y()` 拿到的是 Windows
+       给最大化窗口的边框残影（典型是 -8 / -31），存下去下次启动就成了
+       「标题栏在屏幕上边之外」，必须避免；
+    ② 最后过一遍 `safe_window_geometry()`：保证存进文件里的坐标**一定看得见**，
+       下次启动不用靠兜底也能正常显示。
+
+    返回 [x, y, w, h]；实在取不到就返回 None（调用方保持原值不写）。
+    """
+    try:
+        cur = None
+        try:
+            if window.isMaximized() or window.isFullScreen():
+                normal = window.normalGeometry()
+                if normal.width() >= 200 and normal.height() >= 150:
+                    cur = [normal.x(), normal.y(), normal.width(), normal.height()]
+        except Exception:
+            cur = None
+        if cur is None:
+            cur = [window.x(), window.y(), window.width(), window.height()]
+        safe = safe_window_geometry(cur, default_size)
+        return list(safe) if safe else list(cur)
+    except Exception as e:
+        print(f"[DEBUG] 读取窗口几何失败: {str(e)}")
+        return None
+
+
+def ensure_window_on_screen(window, force_center=False, min_visible=120):
+    """窗口**显示之后**按真实边框再兜一次底：抓不住就摆回屏幕中间（★ v6.12，返回是否挪动过）
+
+    为什么还要这一层：启动时是「先算坐标 → 再 show()」，而真正决定标题栏在哪的是
+    窗口边框，且多屏/DPI 切换时窗口管理器可能自行微调落点。所以等窗口真出来之后，
+    拿 `frameGeometry()` 再核对一次最稳（这是最后一道保险，正常的路径不会触发）。
+
+    `force_center=True` 时无条件居中（登录窗口用：它的位置本来就该居中）。
+    最大化/全屏窗口直接跳过 —— 它们本来就在屏幕内，别去打扰。
+    """
+    if window is None:
+        return False
+    try:
+        if window.isFullScreen() or window.isMaximized():
+            return False
+    except Exception:
+        pass
+    try:
+        rects = _screen_available_rects()
+        if not rects:
+            return False
+        frame = window.frameGeometry()
+        if not force_center:
+            for area in rects:
+                if frame.top() < area.top():
+                    continue
+                if frame.top() > area.bottom() - 40:
+                    continue
+                visible_w = min(frame.right(), area.right()) - max(frame.left(), area.left())
+                if visible_w < min_visible:
+                    continue
+                return False  # 够得着，不折腾
+            print(f"[DEBUG] 窗口真实位置够不着（{frame.getRect()}），摆回屏幕中间")
+        return center_window_on_screen(window)
+    except Exception as e:
+        print(f"[DEBUG] 窗口位置兜底失败: {str(e)}")
         return False
 
 
@@ -872,6 +1149,7 @@ class UserDatabase:
         """
         keep_label_keys = set()
         keep_flag_keys = set()
+        keep_barcode_opt_keys = set()
         for col in columns_config:
             name = col['name']
             keep_label_keys.add(f"col_{name}_label")
@@ -884,6 +1162,21 @@ class UserDatabase:
                     self.cursor.execute('INSERT OR REPLACE INTO config VALUES (?, ?)', (key, "1"))
                 else:
                     self.cursor.execute('DELETE FROM config WHERE key=?', (key,))
+
+            # ★ v6.9：条形码编码格式 / Code128 子集（跟着「条形码」开关一起存）
+            fmt_key = f"barcode_format_{name}"
+            sub_key = f"barcode_subset_{name}"
+            keep_barcode_opt_keys.update((fmt_key, sub_key))
+            if col.get('is_barcode', False):
+                self.cursor.execute('INSERT OR REPLACE INTO config VALUES (?, ?)',
+                                    (fmt_key, normalize_barcode_format(
+                                        col.get('barcode_format', 'auto'))))
+                self.cursor.execute('INSERT OR REPLACE INTO config VALUES (?, ?)',
+                                    (sub_key, normalize_barcode_subset(
+                                        col.get('barcode_subset', 'auto'))))
+            else:
+                self.cursor.execute('DELETE FROM config WHERE key IN (?, ?)',
+                                    (fmt_key, sub_key))
 
         unique_names = [c['name'] for c in columns_config if c.get('is_unique', False)]
         required_names = [c['name'] for c in columns_config if c.get('is_required', False)]
@@ -899,6 +1192,9 @@ class UserDatabase:
             if key.startswith('col_') and key.endswith('_label') and key not in keep_label_keys:
                 self.cursor.execute('DELETE FROM config WHERE key=?', (key,))
             elif key.startswith(('barcode_column_', 'qrcode_column_')) and key not in keep_flag_keys:
+                self.cursor.execute('DELETE FROM config WHERE key=?', (key,))
+            elif key.startswith(('barcode_format_', 'barcode_subset_')) and \
+                    key not in keep_barcode_opt_keys:
                 self.cursor.execute('DELETE FROM config WHERE key=?', (key,))
 
     def migrate_column_config(self, new_columns_config):
@@ -1069,14 +1365,27 @@ class UserDatabase:
             }
             
             # 检查是否是条形码列
+            col_config['is_barcode'] = False
             self.cursor.execute('SELECT value FROM config WHERE key=?', (f"barcode_column_{col}",))
             if self.cursor.fetchone():
                 col_config['is_barcode'] = True
             
             # 检查是否是二维码列
+            col_config['is_qrcode'] = False
             self.cursor.execute('SELECT value FROM config WHERE key=?', (f"qrcode_column_{col}",))
             if self.cursor.fetchone():
                 col_config['is_qrcode'] = True
+
+            # ★ v6.9：条形码编码格式 / Code128 子集（没配置过就是「自动」）
+            col_config['barcode_format'] = 'auto'
+            col_config['barcode_subset'] = 'auto'
+            self.cursor.execute('SELECT key, value FROM config WHERE key IN (?, ?)',
+                                (f"barcode_format_{col}", f"barcode_subset_{col}"))
+            for opt_key, opt_value in self.cursor.fetchall():
+                if opt_key.startswith('barcode_format_'):
+                    col_config['barcode_format'] = normalize_barcode_format(opt_value)
+                else:
+                    col_config['barcode_subset'] = normalize_barcode_subset(opt_value)
             
             # 检查是否是唯一列
             col_config['is_unique'] = col in unique_names
@@ -1115,6 +1424,62 @@ class UserDatabase:
         except Exception as e:
             print(f"[DEBUG] 读取列中文名失败: {str(e)}")
         return labels
+
+    def get_hidden_columns(self):
+        """读取「数据列表」里被隐藏的列名（★ v6.10）
+
+        存在 config 表（key/value），跟着用户库走；读不到就是空列表＝全部显示。
+        键名用 HIDDEN_COLUMNS_CONFIG_KEY（**绝不能以 col_ 开头**，否则会被
+        get_columns_config 的 `LIKE "col_%"` 当成列配置键扫进去）。
+        """
+        return self._load_config_list(HIDDEN_COLUMNS_CONFIG_KEY, '显示列设置')
+
+    def set_hidden_columns(self, names):
+        """保存「数据列表」里被隐藏的列名（★ v6.10，立即 commit）
+
+        传空列表＝全部显示（键仍然写入，便于以后清空设置）。
+        """
+        return self._save_config_list(HIDDEN_COLUMNS_CONFIG_KEY, names, '显示列设置')
+
+    def get_hidden_detail_items(self):
+        """读取「详细信息」页里被隐藏的项目键（★ v6.22）
+
+        键形如 field:<列名> / barcode:<列名> / qrcode:<列名>，与「显示列设置」同一套
+        逻辑（存被隐藏的、空＝全部显示），跟着用户库走。
+        """
+        return self._load_config_list(HIDDEN_DETAIL_CONFIG_KEY, '详细信息显示设置')
+
+    def set_hidden_detail_items(self, keys):
+        """保存「详细信息」页里被隐藏的项目键（★ v6.22，立即 commit）"""
+        return self._save_config_list(HIDDEN_DETAIL_CONFIG_KEY, keys, '详细信息显示设置')
+
+    def _load_config_list(self, config_key, what):
+        """从 config 表读一个「字符串列表」设置（★ v6.22，仅本文件内部复用）"""
+        try:
+            self.cursor.execute('SELECT value FROM config WHERE key=?', (config_key,))
+            row = self.cursor.fetchone()
+            if not row or not row[0]:
+                return []
+            names = json.loads(row[0])
+            return [str(n) for n in names] if isinstance(names, list) else []
+        except Exception as e:
+            print(f"[DEBUG] 读取{what}失败: {str(e)}")
+            return []
+
+    def _save_config_list(self, config_key, names, what):
+        """往 config 表写一个「字符串列表」设置（★ v6.22，仅本文件内部复用）"""
+        try:
+            self.cursor.execute(
+                'CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT)')
+            self.cursor.execute(
+                'INSERT OR REPLACE INTO config VALUES (?, ?)',
+                (config_key,
+                 json.dumps([str(n) for n in (names or [])], ensure_ascii=False)))
+            self.conn.commit()
+            return True
+        except Exception as e:
+            print(f"[DEBUG] 保存{what}失败: {str(e)}")
+            return False
 
     def column_migration_preview(self, new_columns_config):
         """预演「修改列配置」的影响（★ v6.7）
@@ -3253,6 +3618,11 @@ class LoginWindow(QMainWindow):
         
         self.init_ui()
         self._restore_window_state()
+        # ★ v6.12：等窗口真显示出来之后，按【真实边框】再核一次位置（多屏/DPI 变化时
+        #   窗口管理器可能自行改落点）。**故意不加 force_center** —— 位置在构造时已经
+        #   居中好了，这里只负责“够不着就把窗口救回屏幕中间”；如果强制居中，用户刚把
+        #   窗口拖走就会被这个延迟回调拽回来（实测过）。
+        QTimer.singleShot(0, lambda: ensure_window_on_screen(self))
         
         icon_path = resource_path('icon.ico')
         if os.path.exists('icon.ico'):
@@ -3460,13 +3830,30 @@ class LoginWindow(QMainWindow):
 
     # ===== 全局设置实时自动保存 =====
     def _restore_window_state(self):
-        """恢复窗口几何/最大化"""
+        """恢复窗口几何/最大化（★ v6.11：登录窗口每次打开都居中显示）
+
+        用户报过：「选择用户登录的窗口改成默认在屏幕中间，现在都走到屏幕外，先移动都
+        移动不了」。他真实的存档是 `"login_geometry": [903, -64, 823, 400]` —— y 为
+        负，标题栏在屏幕上边之外，抓不住也拖不动。
+
+        所以登录窗口**不再沿用上次的位置**：每次打开都把位置放屏幕中间（只沿用上次的
+        窗口**尺寸**，用户拉大过就保持拉大后的尺寸）；万一屏幕信息拿不到，就用
+        `center_window_on_screen()` 兜底。
+
+        ★ v6.12：摆放改用 `place_window()`（resize + move）—— 以前用的 `setGeometry()`
+        是客户区坐标，比本函数算出的边框坐标低一个标题栏高度，结果每次启动都把窗口
+        往上顶 31px，几轮之后标题栏又出屏（所以 v6.11 看起来“修了又犯”）。
+        """
         try:
             geo = self._global_settings.get('login_geometry')
-            if geo and len(geo) == 4:
-                self.setGeometry(geo[0], geo[1], geo[2], geo[3])
-        except Exception:
-            pass
+            safe = safe_window_geometry(geo, (600, 400), always_center=True)
+            if safe and place_window(self, safe):
+                print(f"[DEBUG] 登录窗口居中使用几何 {list(safe)}（上次 {geo}）")
+            else:
+                center_window_on_screen(self)
+        except Exception as e:
+            print(f"[DEBUG] 恢复登录窗口位置失败，改为居中: {str(e)}")
+            center_window_on_screen(self)
 
     def _autosave_settings(self):
         """实时自动保存（500ms 防抖）"""
@@ -3477,7 +3864,11 @@ class LoginWindow(QMainWindow):
         """立即保存全局设置（原子写入）"""
         try:
             data = load_global_settings()
-            data['login_geometry'] = [self.x(), self.y(), self.width(), self.height()]
+            # ★ v6.12：最大化时不存 -8/-31 那种残影坐标（存下去下次启动标题栏就出屏了），
+            #   并且一律过一遍 safe_window_geometry()，保证存的是“看得见”的位置
+            geo = window_geometry_for_save(self, (600, 400))
+            if geo:
+                data['login_geometry'] = geo
             data['login_maximized'] = self.isMaximized()
             if self._global_settings.get('last_user'):
                 data['last_user'] = self._global_settings['last_user']
@@ -3486,6 +3877,14 @@ class LoginWindow(QMainWindow):
             save_global_settings(data)
         except Exception as e:
             print(f"[DEBUG] 保存全局设置失败: {e}")
+
+    def showEvent(self, event):
+        """每次显示都刷新用户列表（★ v6.15：从「切换用户登录」回来时能立刻看到最新用户）"""
+        super().showEvent(event)
+        try:
+            self.load_users()
+        except Exception as e:
+            print(f"[DEBUG] 刷新用户列表失败: {str(e)}")
 
     def closeEvent(self, event):
         """关闭时强制保存设置"""
@@ -5966,25 +6365,622 @@ class ImportUsersDialog(QDialog):
         return selected_users
 
 
+# ===================== 条形码编码格式 / Code128 子集（★ v6.9）=====================
+# 用户要求：「新建用户」与以后「修改列配置」时，都能逐列指定条形码的编码格式，
+# 以及 Code128 用哪一个子集（A / B / C）。
+#   * 格式：自动（13 位数字走 EAN13，其余走 Code128）/ Code128 / EAN13 / EAN8 / UPC-A / Code39
+#   * 子集：仅 Code128 有效 —— A=大写+数字+控制符；B=大小写+数字+符号；C=纯数字
+#     选「自动」＝交给 python-barcode 自动切换字符集（条码最短，推荐）。
+#   ★ v6.17（用户要求）：「符合的都改成用户要求的，不符合的才改成自动」——
+#     C 不再要求偶数位：纯数字一律用 C（偶数位全程 C；奇数位按 Code128 规范让
+#     最后一位转一次 B，否则那一位会被丢掉）；只有含非数字字符才回退「自动」。
+BARCODE_FORMAT_OPTIONS = [
+    ('自动（13位数字用EAN13，其余Code128）', 'auto'),
+    ('Code128', 'code128'),
+    ('EAN13', 'ean13'),
+    ('EAN8', 'ean8'),
+    ('UPC-A', 'upca'),
+    ('Code39', 'code39'),
+]
+BARCODE_SUBSET_OPTIONS = [
+    ('自动', 'auto'),
+    ('A', 'A'),
+    ('B', 'B'),
+    ('C', 'C'),
+]
+# 只有这些格式才用得上 Code128 子集（其余格式把子集下拉置灰）
+BARCODE_SUBSET_FORMATS = ('auto', 'code128')
+# ===================== 数据列表「显示列」设置（★ v6.10）=====================
+# 用户要求：可以只显示部分列（不想看那么多列时），但添加/保存的数据都是完整的。
+# 所以「隐藏列」只影响【显示】，数据照常录入 / 保存 / 搜索 / 导出。
+#   * 存本用户库 config 表（key/value）——跟着用户库走，换用户互不影响；
+#   * 键名必须【不能以 col_ 开头】（get_columns_config 用 LIKE "col_%" 扫列配置，
+#     写成 col_xxx 会被误认成一列的中文名）；
+#   * 存被【隐藏】的列名列表（而不是“显示”的），这样新增的列默认就是显示的。
+HIDDEN_COLUMNS_CONFIG_KEY = 'hidden_columns'
+# ★ v6.13：数据列表在数据列后面还会画「××条形码 / ××二维码」图列（图片列），
+#   用户要求这些也要能在「显示列设置」里单独勾选。图列的键＝<列名>#barcode /
+#   <列名>#qrcode，和数据列名一起存在同一个 hidden_columns 列表里（这些键不会和
+#   真实列名撞车，也不参与任何数据读写，只用于“画不画这张图”）。
+DISPLAY_BARCODE_KEY_SUFFIX = '#barcode'
+DISPLAY_QRCODE_KEY_SUFFIX = '#qrcode'
+# ===================== 详细信息「显示项」设置（★ v6.22）=====================
+# 用户要求：「设置 增加 详细信息，哪些可以暂时不显示，就好像之前哪些列不显示一样的逻辑，
+#   因为有时候可能只需要显示一些信息，包括可能只需要显示二维码或者一维码 或者 哪些信息，
+#   可能不需要全部都显示。」
+# 与「显示列设置」（hidden_columns）同一套逻辑：**存被隐藏的键**（空＝全部显示），
+# 存在本用户库 config 表的 HIDDEN_DETAIL_CONFIG_KEY 里，跟着用户库走。
+#   键前缀：field:<列名>（基本信息里的字段）/ barcode:<列名>（该列的条码块）/
+#          qrcode:<列名>（该列的二维码块）
+#   ★ 同样**不能**以 col_ 开头（get_columns_config 用 LIKE "col_%" 扫列配置）。
+#   ★ 只影响「🔎详细信息」页画不画，数据/列表/打印/复制/导出都照旧完整。
+HIDDEN_DETAIL_CONFIG_KEY = 'hidden_detail_items'
+DETAIL_FIELD_PREFIX = 'field:'
+DETAIL_BARCODE_PREFIX = 'barcode:'
+DETAIL_QRCODE_PREFIX = 'qrcode:'
+# 详情页三组（顺序＝详情页里的先后顺序）
+DETAIL_GROUPS = (
+    ('field', '📋 基本信息（字段）'),
+    ('barcode', '▮ 条形码信息'),
+    ('qrcode', '▦ 二维码信息'),
+)
+
+
+def display_image_entries(columns_config):
+    """把列配置里带「条形码/二维码」的列展开成图列条目（★ v6.13，模块级单一来源）
+
+    数据列表在数据列后面还会画 `<中文名>条形码` / `<中文名>二维码` 两张图列；这里把它们
+    也当成可选条目（键＝`列名#barcode` / `列名#qrcode`），供「显示列设置」与数据列表共用。
+    条目里带上来源列的出码格式/子集，画图时直接用。
+    """
+    out = []
+    for col in (columns_config or []):
+        if not col or not col.get('name'):
+            continue
+        name = col['name']
+        label = col.get('label', name)
+        if col.get('is_barcode', False):
+            out.append({'name': name + DISPLAY_BARCODE_KEY_SUFFIX,
+                        'label': f'{label}条形码', 'kind': 'barcode',
+                        'source': name, 'source_label': label,
+                        'barcode_format': col.get('barcode_format', 'auto'),
+                        'barcode_subset': col.get('barcode_subset', 'auto')})
+        if col.get('is_qrcode', False):
+            out.append({'name': name + DISPLAY_QRCODE_KEY_SUFFIX,
+                        'label': f'{label}二维码', 'kind': 'qrcode',
+                        'source': name, 'source_label': label})
+    return out
+
+
+def display_entries_with_images(columns_config):
+    """数据列 + 它的条形码/二维码图列（图列紧跟在来源列后面）（★ v6.13）"""
+    entries = []
+    for col in (columns_config or []):
+        if not col or not col.get('name'):
+            continue
+        entries.append(dict(col))
+        entries.extend(display_image_entries([col]))
+    return entries
+
+
+def display_entry_label(columns_config, key):
+    """显示列设置里的键 → 中文名（★ v6.13，状态栏/提示用）"""
+    for entry in display_entries_with_images(columns_config):
+        if entry.get('name') == key:
+            return entry.get('label', key)
+    return key
+
+
+def detail_item_entries(columns_config):
+    """「🔎详细信息」页里可选显示的项目清单（★ v6.22，模块级单一来源）
+
+    顺序＝详情页里的先后顺序，分三组（`DETAIL_GROUPS`）：
+      * `field:<列名>`   —— 「基本信息」里的一个字段（＝一列一行）
+      * `barcode:<列名>` —— 「条形码信息」里该列那一块（值 + 条码图 + 编码说明）
+      * `qrcode:<列名>`  —— 「二维码信息」里该列那一块（值 + 二维码图）
+    条目字段：key（存库用）/ group / label（给用户看的中文名）/ name（列名）。
+    """
+    out = []
+    cols = [c for c in (columns_config or []) if c and c.get('name')]
+    for col in cols:
+        out.append({'key': DETAIL_FIELD_PREFIX + col['name'], 'group': 'field',
+                    'name': col['name'], 'label': col.get('label', col['name'])})
+    for col in cols:
+        if col.get('is_barcode', False):
+            out.append({'key': DETAIL_BARCODE_PREFIX + col['name'], 'group': 'barcode',
+                        'name': col['name'],
+                        'label': f"{col.get('label', col['name'])} 的条形码"})
+    for col in cols:
+        if col.get('is_qrcode', False):
+            out.append({'key': DETAIL_QRCODE_PREFIX + col['name'], 'group': 'qrcode',
+                        'name': col['name'],
+                        'label': f"{col.get('label', col['name'])} 的二维码"})
+    return out
+
+
+def detail_entry_label(columns_config, key):
+    """详细信息显示设置里的键 → 中文名（★ v6.22，状态栏/提示用）"""
+    for entry in detail_item_entries(columns_config):
+        if entry.get('key') == key:
+            return entry.get('label', key)
+    return key
+
+
+def detail_group_label(group_key):
+    """分组键 → 中文分组名（★ v6.22）"""
+    for key, label in DETAIL_GROUPS:
+        if key == group_key:
+            return label
+    return group_key
+
+
+def sort_key_for_text(text):
+    """表头排序用的键（★ v6.14）：数字按数值比，其余按**拼音**比（中文也順序），空值由调用方挑出去
+
+    为什么要这样：
+      * 按文本比会把 10 排在 2 前面（用户报的就是这类“排得不对”）；
+      * 中文按 Unicode 编码点排是乱的（橙/苹/阿/香），按**拼音**排才是 A→Z 的感觉
+        （阿 a / 橙 cheng / 苹 ping / 香 xiang）—— 本程序搜索/拼音列本来就用 pypinyin；
+      * 元组里同位置的类型必须一致，否则 Python 3 会抛 TypeError。
+    """
+    s = str(text).strip()
+    try:
+        return (0, float(s.replace(',', '')), '')
+    except (TypeError, ValueError):
+        pass
+    try:
+        py = ''.join(lazy_pinyin(s)).casefold()
+    except Exception:
+        py = s.casefold()
+    return (1, 0.0, py)
+
+# 兼容手填/旧配置里的写法
+_BARCODE_FORMAT_ALIASES = {
+    'auto': 'auto', '': 'auto', '自动': 'auto', '默认': 'auto',
+    'code128': 'code128', 'code 128': 'code128', '128': 'code128',
+    'ean13': 'ean13', 'ean-13': 'ean13', 'ean13条码': 'ean13',
+    'ean8': 'ean8', 'ean-8': 'ean8',
+    'upca': 'upca', 'upc-a': 'upca', 'upc': 'upca',
+    'code39': 'code39', 'code 39': 'code39',
+}
+
+
+def normalize_barcode_format(value):
+    """把配置里的格式值规整成标准键（认不出来的按「自动」处理）"""
+    return _BARCODE_FORMAT_ALIASES.get(str(value or '').strip().lower(), 'auto')
+
+
+def normalize_barcode_subset(value):
+    """把配置里的子集值规整成 auto/A/B/C（认不出来的按「自动」处理）"""
+    text = str(value or '').strip().upper()
+    return text if text in ('A', 'B', 'C') else 'auto'
+
+
+def barcode_format_label(value):
+    """格式键 → 中文名（提示/调试用）"""
+    key = normalize_barcode_format(value)
+    for label, val in BARCODE_FORMAT_OPTIONS:
+        if val == key:
+            return label
+    return key
+
+
+_LOCKED_CODE128_CLASS = None
+
+
+def is_ascii_digits(text):
+    """是不是「纯数字」（★ v6.17：只认 ASCII 的 0-9）
+
+    **不能用 str.isdigit()**：全角「１２３４」「²²」「٣٤」它也返回 True，但这些字符
+    Code128 根本编不出来（check_code 会抛 IllegalCharacterError → 条码空白）；
+    只有 ASCII 的 0-9 才是 Code128-C 真正支持的“数字”。
+    """
+    return bool(text) and all('0' <= ch <= '9' for ch in text)
+
+
+# ===================== 不符合 Code128 子集的值的标记色（★ v6.18）=====================
+# 用户要求：「不符合 Code128 C 的，可以用颜色标记出来，因为背景色已经是固定的，改背景色
+#   会设计太多东西，所以应该是字体颜色不一样，而且要跟背景色有反差，否则连字都看不清。」
+#   → 只改【字体颜色】，不碰背景色（背景是 5 种马卡龙交替行色）；颜色必须跟这 5 种
+#     行底色都有足够反差：#8B0000（深红）对它们的最低对比度 6.41:1（WCAG AA 正文要求
+#     4.5:1），而普通文字色 #333333 在这些底色上是 8.09~10.57。
+#   改颜色前先跑 `_scaffold\probe_contrast_colors.py` 重新核一遍对比度
+#   （回归测试里也有断言盯着这条，改马卡龙色系或改标记色都会被拦下）。
+BARCODE_MISMATCH_COLOR = '#8B0000'
+# ★ v6.20：条码图本身是**白底**（行底色被图片完全盖住，用户根本看不见），所以“不符合
+#   子集”的条码图直接换成**浅红底**最显眼 —— 黑条在 #FFCDD2 上对比度≈14:1（Scanner
+#   友好），且跟 5 种马卡龙行底色都不同，一眼就能挑出来。
+BARCODE_MISMATCH_BG_COLOR = '#FFCDD2'
+
+# ===================== 条码出图分辨率（★ v6.21 修的扫描不出来）=====================
+# 用户报：「Code128 C 还是不行，我有个程序需要扫 code128 C 才能识别…可以肯定是现在这个
+#   程序里面生成的 C 子集还是有问题」。用 `_scaffold\probe_barcode_size.py` 量出来真因是
+#   **出图被压得太小，不是编码错**：
+#     值 6050532261（10 位）走 C 子集 → 原生 272x280px，每根黑条 2px；
+#     旧代码在 `generate_barcode()` 里统一缩到**高 100px** ⇒ 97x100px、每根黑条只剩
+#     **1px**、还多出 37 个**灰度过渡像素**、黑条从 25 根掉到 21 根（插值把 4 根条糊没了）。
+#     1px 宽的条 + 灰边 ⇒ 任何扫描器都读不出来；而 B 子集同值出图 402px 宽（条更稀），
+#     勉强能读 ⇒ 看起来就像「C 子集坏了」。
+#   修法：**不再缩放位图**，改成让 python-barcode 直接以更高 dpi 出图（模块宽度=mm*dpi/25.4，
+#     条宽永远是整数像素、无灰度）：dpi 300→条 2px，600→4px，900→7px（见探针输出）。
+#   表格里要紧凑显示的地方自己缩缩略图（`barcode_preview_pixmap()`，行高仍是 100px）；
+#   详情页 / 导出图片 / 打印 / HTML 报告用 `BARCODE_RENDER_SCALE` 倍分辨率（每模块 ≥4px，
+#   屏幕上 1mm 多一个模块，扫描枪直接对着扫就能读）。
+BARCODE_PREVIEW_HEIGHT = 100   # 表格里条码缩略图的高度（与旧版一致，行高不变）
+BARCODE_RENDER_SCALE = 2       # 详情/导出/打印用的放大倍数（dpi=300*2=600）
+
+
+def barcode_background_for(value, barcode_format='auto', subset='auto'):
+    """这张条码图该用什么底色（★ v6.20）：装不进所选 Code128 子集 → 浅红，否则 None（白底）
+
+    只影响**屏幕上画的图**；导出/打印仍用白底（扫描最安全，也不会把颜色印到标签上）。
+    """
+    if code128_subset_mismatch(value, barcode_format, subset):
+        return BARCODE_MISMATCH_BG_COLOR
+    return None
+
+
+def code128_subset_mismatch(text, barcode_format='auto', subset='auto'):
+    """值装不进该列选的 Code128 子集 → 返回一句原因；装得进 / 不涉及子集 → None（★ v6.18）
+
+    只有「格式是 Code128 系（auto / code128）+ 子集锁定为 A/B/C」才谈得上“不符合”：
+      * 子集选「自动」时 python-barcode 会自己切字符集，永远装得下，不用标记；
+      * EAN13 / EAN8 / UPC-A / Code39 不涉及 Code128 子集，也不管；
+      * 空值不算（没数据不是错）。
+    """
+    try:
+        if text is None or str(text).strip() == '':
+            return None
+        if normalize_barcode_format(barcode_format) not in BARCODE_SUBSET_FORMATS:
+            return None
+        sub = normalize_barcode_subset(subset)
+        if sub == 'auto':
+            return None
+        value = str(text).strip()
+        if sub == 'C':
+            if is_ascii_digits(value):
+                return None
+            bad = ''.join(sorted({ch for ch in value if not ('0' <= ch <= '9')}))
+            return (f'Code128-C 只支持纯数字，这个值里还有「{bad[:12]}」这类非数字字符，'
+                    '出码时会自动回退为「自动」子集（条码本身仍能扫）')
+        from barcode.charsets import code128 as _c128
+        table = _c128.A if sub == 'A' else _c128.B
+        bad = ''.join(sorted({ch for ch in value if ch not in table}))
+        if not bad:
+            return None
+        return (f'Code128-{sub} 装不下「{bad[:12]}」，'
+                '出码时会自动回退为「自动」子集（条码本身仍能扫）')
+    except Exception as e:      # 配置畸形也绝不能把界面搞崩
+        print(f"[DEBUG] 判断 Code128 子集是否符合时出错: {e}")
+        return None
+
+
+def mark_barcode_mismatch(item, col_config, value):
+    """把不符合该列 Code128 子集的值标成醒目的字体颜色（+ tooltip 说明原因）（★ v6.18）
+
+    模块级函数（不挂 MainWindow）—— 表格渲染路径与测试里的替身对象都能直接用。
+    返回 True 表示标了（方便测试断言）。
+    """
+    cfg = col_config or {}
+    reason = code128_subset_mismatch(value, cfg.get('barcode_format', 'auto'),
+                                    cfg.get('barcode_subset', 'auto'))
+    if not reason:
+        return False
+    item.setForeground(QColor(BARCODE_MISMATCH_COLOR))
+    item.setToolTip(f'⚠️ {reason}')
+    return True
+
+
+def _locked_code128_class():
+    """惰性创建「锁定 Code128 子集」的子类（不在模块顶部导入 barcode，避免拖慢启动）"""
+    global _LOCKED_CODE128_CLASS
+    if _LOCKED_CODE128_CLASS is None:
+        from barcode import Code128
+        from barcode.writer import ImageWriter
+
+        class LockedCode128(Code128):
+            """固定使用某一个子集的 Code128（★ v6.9；v6.17 修两个坑）
+
+            python-barcode 默认会为了让条码最短而在 A/B/C 之间来回切换；
+            这里禁止切换，只用用户指定的子集（条码可能变长，但严格符合所选子集）。
+
+            顺手修掉上游的两个问题：
+              1. `_try_to_optimize()` 假设「起始符后面的第一个码一定是切换码」，会把
+                 [105, 99, ...] 合并成 [105, ...] —— 可 99 在 C 里是**数据对「99」**，
+                 于是「99」开头的数字（例如 9912345678）会被**静默吃掉两位**。
+                 锁定子集时我们从不切换，不需要这种合并，直接不合并最安全。
+              2. `_build()` 会改写 self._charset / self._buffer（C 里奇数位数字会把末位
+                 转成 B），同一个对象再出一次码就变了。每次出码前复位成锁定值。
+            """
+
+            def __init__(self, code, charset='B', writer=None):
+                super().__init__(code, writer=writer or ImageWriter())
+                self._locked_charset = charset
+                self._charset = charset
+
+            def _maybe_switch_charset(self, pos):
+                return []
+
+            def _try_to_optimize(self, encoded):
+                return encoded
+
+            def _build(self):
+                self._charset = self._locked_charset
+                self._buffer = ''
+                return super()._build()
+
+        _LOCKED_CODE128_CLASS = LockedCode128
+    return _LOCKED_CODE128_CLASS
+
+
+def make_code128_object(data_str, subset='auto'):
+    """创建 Code128 条码对象（★ v6.17：**装得进就按用户选的子集出码**，装不进才回退自动）
+
+      * C：纯数字就用 C —— 偶数位全程 C；奇数位按 Code128 规范让最后一位转一次 B
+        （Code128-C 每符号压两位数字，落单的那位只能这样编，不会丢数字）。
+        只有含非数字字符才回退「自动」；首尾空格不参与判断。
+      * A / B：数据里每个字符都在该子集的字符表里就用它；有装不进的字符才回退。
+      * auto：交给 python-barcode 自动切换字符集（纯数字的结果与 C 相同，但走我们
+        自己的锁定实现 —— 上游默认实现会把首对「99」误当切换码吃掉两位数字）。
+    """
+    from barcode import Code128
+    from barcode.writer import ImageWriter
+
+    text = str(data_str)
+    sub = normalize_barcode_subset(subset)
+    if sub == 'C':
+        digits = text.strip()
+        if is_ascii_digits(digits):
+            return _locked_code128_class()(digits, 'C')
+        print(f"[DEBUG] Code128-C 只能装纯数字，{digits!r} 含非数字字符，已回退为自动子集")
+    elif sub in ('A', 'B'):
+        from barcode.charsets import code128 as _c128
+        table = _c128.A if sub == 'A' else _c128.B
+        if text and all(ch in table for ch in text):
+            return _locked_code128_class()(text, sub)
+        print(f"[DEBUG] Code128-{sub} 不支持 {text!r} 里的字符，已回退为自动子集")
+    elif is_ascii_digits(text):
+        return _locked_code128_class()(text, 'C')
+    return Code128(text, writer=ImageWriter())
+
+
+def build_barcode_object(data_str, barcode_format='auto', subset='auto'):
+    """按「编码格式 + Code128 子集」创建条码对象（★ v6.9）
+
+    返回 (barcode 对象, 实际使用的格式, 备注或 None)。
+    数据不满足所选格式时**不报错**，而是回退到 Code128 并给出备注 ——
+    表格里永远能看到条码，不会因为一列设错格式就出现大片空白。
+    """
+    from barcode import EAN13, EAN8, UPCA, Code39
+    from barcode.writer import ImageWriter
+
+    text = str(data_str)
+    fmt = normalize_barcode_format(barcode_format)
+    note = None
+
+    if fmt == 'auto':
+        fmt = 'ean13' if (text.isdigit() and len(text) == 13) else 'code128'
+
+    if fmt in ('ean13', 'ean8', 'upca'):
+        need = {'ean13': 12, 'ean8': 7, 'upca': 11}[fmt]
+        digits = ''.join(ch for ch in text if ch.isdigit())[:need]
+        if len(digits) == need:
+            cls = {'ean13': EAN13, 'ean8': EAN8, 'upca': UPCA}[fmt]
+            return cls(digits, writer=ImageWriter()), fmt, note
+        note = (f"{barcode_format_label(fmt)} 需要 {need} 位数字"
+                "（校验位自动计算），已回退为 Code128")
+        fmt = 'code128'
+    elif fmt == 'code39':
+        try:
+            return Code39(text, writer=ImageWriter()), 'code39', note
+        except Exception as e:
+            print(f"[DEBUG] Code39 编码失败: {str(e)}")
+            note = 'Code39 不支持该内容，已回退为 Code128'
+            fmt = 'code128'
+
+    return make_code128_object(text, subset), 'code128', note
+
+
+# ===================== 「这张条码实际是用什么出的」说明（★ v6.19）=====================
+# 用户曾问：「一维码 为什么没有实现 code128 C 子集方式？」—— 光看条码图根本看不出来，
+#   所以把「实际用了哪个子集」直接显示出来：表格/搜索结果的**条码图上悬停看 tooltip**，
+#   详细信息页在条码图下面写一行「编码：…」。这样值符不符合、有没有回退、起始符是
+#   103/104/105 一目了然，不用再猜（C 编 10 位数字＝起始105＋5对＋校验，条码明显更窄）。
+def barcode_display_text(data):
+    """出码前把数据规整成可编码文本（★ v6.19 抽出来，供「出码」与「说明」共用）
+
+    含非 ASCII（中文等）时转成「拼音首字母_6位哈希」——沿用最早的老逻辑，
+    现在只此一处实现，免得说明与实际出码两张嘴。
+    """
+    text = str(data)
+    if any(ord(ch) > 127 for ch in text):
+        try:
+            from pypinyin import lazy_pinyin
+            import hashlib
+            initials = ''.join([x[0] for x in lazy_pinyin(text) if x])
+            digest = hashlib.md5(text.encode('utf-8')).hexdigest()[:6]
+            text = f"{initials}_{digest}".upper()[:80]
+        except Exception as e:
+            print(f"[DEBUG] 非 ASCII 值转拼音失败，按原样出码: {e}")
+    return text
+
+
+def _code128_switch_names(codes):
+    """列出 Code128 码元里真正“切字符集”的那些（★ v6.19）
+
+    **不能只看 99/100/101**：码元含义随当前字符集变 —— 在 C 里 100=TO_B、101=TO_A，
+    而 **99 是数据对「99」**（不是切换码）；在 B 里 99=TO_C、100 是数据字符 'ô'。
+    返回切换到的子集名字列表，例如 ['B'] 表示中途切到过 B。
+    """
+    charset = {103: 'A', 104: 'B', 105: 'C'}.get(codes[0]) if codes else None
+    out = []
+    for code in codes[1:]:
+        if charset == 'C':
+            if code == 100:
+                charset, target = 'B', 'B'
+            elif code == 101:
+                charset, target = 'A', 'A'
+            else:
+                continue
+        elif code == 99:
+            charset, target = 'C', 'C'
+        elif charset == 'A' and code == 100:
+            charset, target = 'B', 'B'
+        elif charset == 'B' and code == 101:
+            charset, target = 'A', 'A'
+        else:
+            continue
+        out.append(target)
+    return out
+
+
+def describe_barcode_encoding(data, barcode_format='auto', subset='auto'):
+    """一行中文说明「这张条码实际是用什么出的」（★ v6.19，实际构建对象后看起始符）
+
+    例：`Code128-C 全程 C 子集（起始符 105）`
+        `Code128-C，中间切了一次 B（起始符 105）`——奇数位数字，Code128 规范要求
+        `Code128 自动切换（起始符 104）：所选 C 子集装不下，已回退`
+        `EAN13`
+    """
+    if data is None or str(data).strip() == '':
+        return '（空值，不出码）'
+    text = barcode_display_text(data)
+    try:
+        obj, used, note = build_barcode_object(text, barcode_format, subset)
+        if used != 'code128':
+            desc = barcode_format_label(used)
+        else:
+            codes = list(obj.encoded)
+            start = codes[0]
+            name = {103: 'A', 104: 'B', 105: 'C'}.get(start, '?')
+            switches = _code128_switch_names(codes)
+            asked = normalize_barcode_subset(subset)
+            if asked == 'auto':
+                desc = f'Code128 自动切换字符集（起始符 {start}＝{name}）'
+            elif code128_subset_mismatch(text, barcode_format, subset):
+                desc = (f'Code128 自动切换（起始符 {start}＝{name}）：'
+                        f'所选 {asked} 子集装不下，已回退')
+            elif switches:
+                desc = (f'Code128-{asked}，中间切了一次 {"、".join(switches)}'
+                        f'（起始符 {start}）')
+            else:
+                desc = f'Code128-{asked} 全程 {asked} 子集（起始符 {start}）'
+        if note:
+            desc += f'；{note}'
+        return desc
+    except Exception as e:
+        return f'（无法出码：{type(e).__name__}: {e}）'
+
+
+class BarcodeZoomLabel(QLabel):
+    """表格里的条码**缩略图**控件（★ v6.21）—— 双击就把这张条码放大出来
+
+    为什么要它：表格里的缩略图只有 100px 高、条太细，扫描器/别家程序读不出来；
+    `generate_barcode()` 现在会按 2 倍分辨率重新出一张 **大图**（每模块 ≈1.2mm），
+    双击这张缩略图就能看到大图、直接对着屏幕扫，或者「另存为 PNG」交给别家程序读。
+
+    事件必须 `accept()`：否则双击会穿透给表格的 `cellDoubleClicked`（那会跳去详情页）。
+    """
+    doubleClicked = Signal()
+
+    def mouseDoubleClickEvent(self, event):
+        self.doubleClicked.emit()
+        event.accept()
+
+
+class BarcodeZoomDialog(QDialog):
+    """条码放大窗口（★ v6.21）：大图 + 编码说明 + 另存为 PNG
+
+    `image` 必须是**已经按高分辨率出好的** QImage（如 `scale=BARCODE_RENDER_SCALE`），
+    这里只负责显示与保存，不再做任何缩放（缩放会把条糊掉 —— v6.21 修的就是这个）。
+    """
+    MAX_SHOW_WIDTH = 900     # 屏幕上一行放不下时只缩显示，保存时仍存原图
+
+    def __init__(self, parent, image, value='', encoding='', background=None):
+        super().__init__(parent)
+        self._image = image
+        self._value = str(value)
+        self._encoding = encoding or ''
+        self.setWindowTitle(f'条码放大 - {self._value}' if self._value else '条码放大')
+        self.setMinimumWidth(420)
+        layout = QVBoxLayout(self)
+
+        head = QLabel(f'<b>{self._value}</b>' if self._value else '')
+        head.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        layout.addWidget(head)
+
+        img_label = QLabel()
+        img_label.setAlignment(Qt.AlignCenter)
+        pixmap = QPixmap.fromImage(image)
+        if pixmap.width() > self.MAX_SHOW_WIDTH:
+            pixmap = pixmap.scaledToWidth(self.MAX_SHOW_WIDTH, Qt.SmoothTransformation)
+        img_label.setPixmap(pixmap)
+        img_label.setStyleSheet(f"background-color: {background or 'white'};")
+        img_label.setToolTip('这张是放大后的条码，可以直接对着屏幕扫')
+        img_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(img_label)
+
+        if self._encoding:
+            desc = QLabel(f'编码：{self._encoding}')
+            desc.setStyleSheet('color: #666; font-size: 11px;')
+            desc.setWordWrap(True)
+            layout.addWidget(desc)
+
+        size_label = QLabel(f'图片尺寸：{image.width()}×{image.height()} 像素'
+                            f'　（每根条 {max(1, round(image.width() / 90))} 像素左右）')
+        size_label.setStyleSheet('color: #888; font-size: 11px;')
+        layout.addWidget(size_label)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        save_btn = QPushButton('💾 另存为 PNG')
+        save_btn.clicked.connect(self.save_png)
+        close_btn = QPushButton('关闭')
+        close_btn.clicked.connect(self.accept)
+        btn_row.addWidget(save_btn)
+        btn_row.addWidget(close_btn)
+        layout.addLayout(btn_row)
+
+        self.resize(min(960, image.width() + 60), min(760, image.height() + 190))
+
+    def save_png(self):
+        """另存为 PNG（存的是原始大图，不经任何缩放）"""
+        default = f'{self._value}_barcode.png' if self._value else 'barcode.png'
+        filename, _ = QFileDialog.getSaveFileName(self, '保存条码图片', default,
+                                                  'PNG图片 (*.png)')
+        if not filename:
+            return
+        try:
+            if self._image.save(filename):
+                notify(self, f'条码已保存到：\n{filename}', 'success')
+            else:
+                notify(self, '保存失败：无法写入该文件', 'error')
+        except Exception as e:
+            notify(self, f'保存失败：{str(e)}', 'error')
+
+
 class ColumnConfigDialog(QDialog):
     def __init__(self, parent=None):
         # ★ v6.5：支持传入父窗口（登录后从主窗口打开时居中显示/模态跟随）
         super().__init__(parent)
         self.setWindowTitle('列配置')
-        self.resize(800, 500)
+        self.resize(1080, 520)  # ★ v6.9：多了「条码格式 / Code128 子集」两列
         
         layout = QVBoxLayout()
         self.setLayout(layout)
         
         # 说明标签
-        info_label = QLabel('配置数据表的列结构。至少需要一列，可以设置列名、显示名称、数据类型和特殊属性。')
+        info_label = QLabel('配置数据表的列结构。至少需要一列，可以设置列名、显示名称、数据类型和特殊属性。\n'
+                            '勾选「条形码」的列还可以选择编码格式（自动/Code128/EAN13/EAN8/UPC-A/Code39）'
+                            '与 Code128 子集（自动/A/B/C）。')
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
         
         # 表格用于配置列
         self.table = QTableWidget()
-        self.table.setColumnCount(7)
-        self.table.setHorizontalHeaderLabels(['列名', '显示名称', '数据类型', '必填', '唯一', '条形码', '二维码'])
+        self.table.setColumnCount(9)
+        self.table.setHorizontalHeaderLabels(['列名', '显示名称', '数据类型', '必填', '唯一', '条形码', '二维码',
+                                              '条码格式', 'Code128子集'])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         layout.addWidget(self.table)
@@ -6015,6 +7011,54 @@ class ColumnConfigDialog(QDialog):
         # 初始添加一行
         self.add_column()
     
+    # ---------- 条形码格式 / Code128 子集（★ v6.9）----------
+    def _make_format_combo(self):
+        combo = QComboBox()
+        for label, value in BARCODE_FORMAT_OPTIONS:
+            combo.addItem(label, value)
+        combo.setToolTip('条形码编码格式：\n'
+                         '· 自动：13 位数字用 EAN13，其余用 Code128（推荐）\n'
+                         '· EAN13/EAN8/UPC-A：只支持数字，位数不足会自动回退 Code128\n'
+                         '· Code39：只支持大写字母/数字/-. $/+%，小写会自动转大写\n'
+                         '· 任何格式数据不满足时都会回退 Code128，不会出现空白条码')
+        return combo
+
+    def _make_subset_combo(self):
+        combo = QComboBox()
+        for label, value in BARCODE_SUBSET_OPTIONS:
+            combo.addItem(label, value)
+        combo.setToolTip('仅 Code128 有效：A=大写+数字+控制符，B=大小写+数字+符号，'
+                         'C=纯数字（任意位数；奇数位时最后一位按规范转 B）\n'
+                         '能装进所选子集就按你的设置出码，装不进才回退「自动」')
+        return combo
+
+    def _apply_barcode_column_widths(self):
+        self.table.setColumnWidth(0, 120)
+        self.table.setColumnWidth(2, 120)   # 加宽以适应中文
+        for i in range(3, 7):
+            self.table.setColumnWidth(i, 60)
+        self.table.setColumnWidth(7, 200)   # ★ v6.9 条码格式
+        self.table.setColumnWidth(8, 110)   # ★ v6.9 Code128 子集
+
+    def _row_of_widget(self, widget):
+        """现查某个单元格控件所在行（删行后行号会变，所以不能缓存行号）"""
+        for r in range(self.table.rowCount()):
+            for c in range(self.table.columnCount()):
+                if self.table.cellWidget(r, c) is widget:
+                    return r
+        return -1
+
+    def _sync_subset_enabled(self, format_combo):
+        """只有 Code128 系格式才用得上子集，其它格式把子集下拉置灰"""
+        row = self._row_of_widget(format_combo)
+        if row < 0:
+            return
+        subset_combo = self.table.cellWidget(row, 8)
+        if subset_combo is None:
+            return
+        subset_combo.setEnabled(
+            normalize_barcode_format(format_combo.currentData()) in BARCODE_SUBSET_FORMATS)
+
     def add_column(self):
         row = self.table.rowCount()
         self.table.insertRow(row)
@@ -6065,11 +7109,17 @@ class ColumnConfigDialog(QDialog):
         qrcode_check = QCheckBox()
         self.table.setCellWidget(row, 6, qrcode_check)
         
+        # ★ v6.9：条形码编码格式 / Code128 子集
+        format_combo = self._make_format_combo()
+        self.table.setCellWidget(row, 7, format_combo)
+        subset_combo = self._make_subset_combo()
+        self.table.setCellWidget(row, 8, subset_combo)
+        self._sync_subset_enabled(format_combo)
+        format_combo.currentIndexChanged.connect(
+            lambda _i, c=format_combo: self._sync_subset_enabled(c))
+        
         # 设置列宽
-        self.table.setColumnWidth(0, 120)
-        self.table.setColumnWidth(2, 120)  # 加宽以适应中文
-        for i in range(3, 7):
-            self.table.setColumnWidth(i, 60)
+        self._apply_barcode_column_widths()
     
     def remove_column(self):
         current_row = self.table.currentRow()
@@ -6105,11 +7155,24 @@ class ColumnConfigDialog(QDialog):
                 'is_required': self.table.cellWidget(row, 3).isChecked(),
                 'is_unique': self.table.cellWidget(row, 4).isChecked(),
                 'is_barcode': self.table.cellWidget(row, 5).isChecked(),
-                'is_qrcode': self.table.cellWidget(row, 6).isChecked()
+                'is_qrcode': self.table.cellWidget(row, 6).isChecked(),
+                # ★ v6.9：条形码编码格式 / Code128 子集
+                'barcode_format': normalize_barcode_format(
+                    self._combo_value(row, 7)),
+                'barcode_subset': normalize_barcode_subset(
+                    self._combo_value(row, 8)),
             }
             columns_config.append(config)
         
         return columns_config
+
+    def _combo_value(self, row, col, default='auto'):
+        """取单元格里下拉框的当前值（控件缺失时给默认值）"""
+        combo = self.table.cellWidget(row, col)
+        if combo is None:
+            return default
+        value = combo.currentData()
+        return default if value is None else value
 
     def load_existing_config(self, columns_config):
         """加载现有的列配置到对话框中"""
@@ -6171,12 +7234,382 @@ class ColumnConfigDialog(QDialog):
             qrcode_check = QCheckBox()
             qrcode_check.setChecked(col_config.get('is_qrcode', False))
             self.table.setCellWidget(row, 6, qrcode_check)
+
+            # ★ v6.9：条形码编码格式 / Code128 子集（旧配置没这两项 → 自动）
+            format_combo = self._make_format_combo()
+            fmt_idx = format_combo.findData(
+                normalize_barcode_format(col_config.get('barcode_format', 'auto')))
+            if fmt_idx >= 0:
+                format_combo.setCurrentIndex(fmt_idx)
+            self.table.setCellWidget(row, 7, format_combo)
+
+            subset_combo = self._make_subset_combo()
+            sub_idx = subset_combo.findData(
+                normalize_barcode_subset(col_config.get('barcode_subset', 'auto')))
+            if sub_idx >= 0:
+                subset_combo.setCurrentIndex(sub_idx)
+            self.table.setCellWidget(row, 8, subset_combo)
+
+            self._sync_subset_enabled(format_combo)
+            format_combo.currentIndexChanged.connect(
+                lambda _i, c=format_combo: self._sync_subset_enabled(c))
         
         # 设置列宽
-        self.table.setColumnWidth(0, 120)
-        self.table.setColumnWidth(2, 120)
-        for i in range(3, 7):
-            self.table.setColumnWidth(i, 60)
+        self._apply_barcode_column_widths()
+
+
+class DetailVisibilityDialog(QDialog):
+    """「详细信息显示设置」对话框（★ v6.22）
+
+    用户需求：详情页有时候只需要看一部分 —— 例如只想看二维码、或只想看一维码、
+    或只想看某几个字段，不想把一长串字段全铺出来。逻辑与「显示列设置」一致：
+
+      * 取消勾选 = 该项**不在「🔎详细信息」页里显示**（字段 / 该列的条码块 / 该列的二维码块）；
+      * **数据一点不动**：数据列表、录入编辑、搜索、统计、打印、复制、导出都还是完整的；
+      * 三组（基本信息字段 / 条形码 / 二维码）各自成组，组上面那个父节点勾一下＝整组开关；
+      * 存在本用户库 config 表的 hidden_detail_items 键里，下次打开还是这套；换用户各管各的。
+    """
+
+    def __init__(self, entries, hidden_keys=None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle('详细信息显示设置')
+        self.resize(540, 640)
+        self.entries = [e for e in (entries or []) if e.get('key')]
+        self._hidden = set(hidden_keys or [])
+
+        layout = QVBoxLayout()
+        self.setLayout(layout)
+
+        info = QLabel(
+            '勾选要在「🔎详细信息」页里显示的项目：\n'
+            '基本信息里的每个字段、每一列的条形码、每一列的二维码，都可以单独取消勾选。\n'
+            '取消勾选只是不在详情页里显示 —— 数据完全不受影响：\n'
+            '数据列表、录入编辑、搜索、统计、打印、复制、导出都还是完整的。\n'
+            '组名（基本信息 / 条形码 / 二维码）上点一下＝整组一起开关。')
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        # 常用场景的快捷按钮（用户：「可能只需要显示二维码或者一维码」）
+        quick1 = QHBoxLayout()
+        all_btn = QPushButton('✅全部显示')
+        all_btn.clicked.connect(lambda: self.set_all(True))
+        quick1.addWidget(all_btn)
+        none_btn = QPushButton('🚫全部隐藏')
+        none_btn.clicked.connect(lambda: self.set_all(False))
+        quick1.addWidget(none_btn)
+        invert_btn = QPushButton('🔁反选')
+        invert_btn.clicked.connect(self.invert_selection)
+        quick1.addWidget(invert_btn)
+        quick1.addStretch()
+        layout.addLayout(quick1)
+
+        quick2 = QHBoxLayout()
+        only_basic_btn = QPushButton('📋只看基本信息')
+        only_basic_btn.clicked.connect(lambda: self.only_group('field'))
+        quick2.addWidget(only_basic_btn)
+        only_barcode_btn = QPushButton('▮只看一维码')
+        only_barcode_btn.clicked.connect(lambda: self.only_group('barcode'))
+        quick2.addWidget(only_barcode_btn)
+        only_qrcode_btn = QPushButton('▦只看二维码')
+        only_qrcode_btn.clicked.connect(lambda: self.only_group('qrcode'))
+        quick2.addWidget(only_qrcode_btn)
+        quick2.addStretch()
+        layout.addLayout(quick2)
+
+        # 清单（树：顶层＝分组，子项＝具体项目，子项可勾选；父项自动三态）
+        self.tree = QTreeWidget()
+        self.tree.setHeaderHidden(True)
+        self.tree.setToolTip('勾选要显示的项目；分组名上点一下＝整组开关')
+        for group_key, group_label in DETAIL_GROUPS:
+            group_entries = [e for e in self.entries if e.get('group') == group_key]
+            if not group_entries:
+                continue
+            top = QTreeWidgetItem([f'{group_label}（{len(group_entries)} 项）'])
+            top.setFlags(top.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsAutoTristate)
+            top.setCheckState(0, Qt.Checked)
+            top.setData(0, Qt.UserRole, None)   # 分组本身不是可保存的键
+            for entry in group_entries:
+                child = QTreeWidgetItem([entry.get('label', entry['key'])])
+                child.setFlags(child.flags() | Qt.ItemIsUserCheckable)
+                child.setCheckState(0, Qt.Unchecked if entry['key'] in self._hidden
+                                    else Qt.Checked)
+                child.setData(0, Qt.UserRole, entry['key'])
+                child.setToolTip(0, entry['key'])
+                top.addChild(child)
+            self.tree.addTopLevelItem(top)
+        self.tree.expandAll()
+        self.tree.itemChanged.connect(self._update_summary)
+        layout.addWidget(self.tree)
+
+        self.summary_label = QLabel()
+        layout.addWidget(self.summary_label)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch()
+        ok_btn = QPushButton('确定')
+        ok_btn.setDefault(True)
+        ok_btn.clicked.connect(self._on_accept)
+        button_row.addWidget(ok_btn)
+        cancel_btn = QPushButton('取消')
+        cancel_btn.clicked.connect(self.reject)
+        button_row.addWidget(cancel_btn)
+        layout.addLayout(button_row)
+
+        self._update_summary()
+
+    # ---------- 勾选状态读写 ----------
+
+    def _leaf_items(self):
+        """所有可勾选的子项（分组节点不在内）"""
+        items = []
+        for i in range(self.tree.topLevelItemCount()):
+            top = self.tree.topLevelItem(i)
+            for j in range(top.childCount()):
+                items.append(top.child(j))
+        return items
+
+    def checked_keys(self):
+        """当前勾选（要显示）的项目键"""
+        return [it.data(0, Qt.UserRole) for it in self._leaf_items()
+                if it.checkState(0) == Qt.Checked and it.data(0, Qt.UserRole)]
+
+    def get_hidden_items(self):
+        """要隐藏（未勾选）的项目键列表"""
+        checked = set(self.checked_keys())
+        return [e['key'] for e in self.entries if e['key'] not in checked]
+
+    def set_all(self, checked):
+        self._set_checked(None, checked)
+
+    def _set_checked(self, keys, checked):
+        """把指定键的子项设为 (不)勾选；keys=None 表示全部子项"""
+        keys = None if keys is None else set(keys)
+        state = Qt.Checked if checked else Qt.Unchecked
+        self.tree.blockSignals(True)
+        try:
+            for item in self._leaf_items():
+                key = item.data(0, Qt.UserRole)
+                if keys is None or key in keys:
+                    item.setCheckState(0, state)
+        finally:
+            self.tree.blockSignals(False)
+        self._update_summary()
+
+    def invert_selection(self):
+        self.tree.blockSignals(True)
+        try:
+            for item in self._leaf_items():
+                item.setCheckState(0, Qt.Unchecked if item.checkState(0) == Qt.Checked
+                                   else Qt.Checked)
+        finally:
+            self.tree.blockSignals(False)
+        self._update_summary()
+
+    def only_group(self, group_key):
+        """只显示某一组（📋只看基本信息 / ▮只看一维码 / ▦只看二维码）"""
+        keys = {e['key'] for e in self.entries if e.get('group') == group_key}
+        if not keys:
+            notify(self, f'当前没有可显示的「{detail_group_label(group_key)}」项目'
+                         f'（列配置里没有勾这一类）', 'warn')
+            return
+        self.tree.blockSignals(True)
+        try:
+            for item in self._leaf_items():
+                item.setCheckState(0, Qt.Checked if item.data(0, Qt.UserRole) in keys
+                                   else Qt.Unchecked)
+        finally:
+            self.tree.blockSignals(False)
+        self._update_summary()
+
+    # ---------- 统计 / 确定 ----------
+
+    def _update_summary(self, *_args):
+        shown = len(self.checked_keys())
+        total = len(self.entries)
+        # 统计行里用短名（分组标题带「（字段）」这类后缀，放统计里太啰嗦）
+        short = {'field': '基本信息', 'barcode': '条形码', 'qrcode': '二维码'}
+        parts = []
+        for group_key in ('field', 'barcode', 'qrcode'):
+            n = len([e for e in self.entries if e.get('group') == group_key])
+            if n:
+                parts.append(f'{short[group_key]} {n}')
+        extra = '（' + ' · '.join(parts) + '）' if parts else ''
+        if total and shown == 0:
+            self.summary_label.setText(
+                f'共 {total} 项{extra} ｜ ⚠️ 一项都没勾：至少勾一项才能确定')
+        elif shown == total:
+            self.summary_label.setText(f'共 {total} 项{extra} ｜ 全部显示')
+        else:
+            self.summary_label.setText(
+                f'共 {total} 项{extra} ｜ 显示 {shown} 项，隐藏 {total - shown} 项')
+
+    def _on_accept(self):
+        """一项都不勾＝详情页空着，不让确定（与「显示列设置」同样的兜底）"""
+        if not self.checked_keys():
+            notify(self, '至少要勾选一项显示（否则详细页会整页空着）', 'warn')
+            return
+        self.accept()
+
+
+class ColumnVisibilityDialog(QDialog):
+    """「显示列设置」对话框（★ v6.10）
+
+    用户需求：有时候不想在列表里显示全部列，只显示一部分就够 —— 但**添加进去的
+    数据必须是完整的**。所以这里只挑「数据列表里显示哪些列」：
+
+      * 取消勾选 = 该列不在数据列表里显示（连带它的条形码/二维码图也不显示）；
+      * **数据本身完全不受影响**：录入表单、详情、打印、复制、导出、搜索
+        仍然是全部列，什么都不丢；
+      * 存在本用户库 config 表里，下次打开还是这套显示列；换用户各管各的。
+    """
+
+    def __init__(self, columns_config, hidden_columns=None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle('显示列设置')
+        self.resize(460, 560)
+
+        self.columns_config = [c for c in (columns_config or []) if c.get('name')]
+        # ★ v6.13：条形码/二维码图列也列进来（紧跟在它的来源列后面）。数据列表里画的就
+        #   是这些条目，所以这里用同一套展开逻辑（模块级 display_entries_with_images）。
+        self.entries = display_entries_with_images(self.columns_config)
+        self._hidden = set(hidden_columns or [])
+
+        layout = QVBoxLayout()
+        self.setLayout(layout)
+
+        info_label = QLabel(
+            '勾选要显示在「📊数据列表」里的列。\n'
+            '条形码 / 二维码 图列也在这里（要是有的话），可以单独勾选。\n'
+            '没勾的列只是不显示，数据照常录入、保存、搜索、导出；\n'
+            '详情/打印/复制/导出仍然是完整数据（不会丢字段）。\n'
+            '设置保存在当前用户的库里，下次打开还是这套显示列。')
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+
+        # 快捷按钮行
+        quick_row = QHBoxLayout()
+        all_btn = QPushButton('✅全部显示')
+        all_btn.clicked.connect(lambda: self.set_all(True))
+        quick_row.addWidget(all_btn)
+
+        none_btn = QPushButton('🚫全部隐藏')
+        none_btn.clicked.connect(lambda: self.set_all(False))
+        quick_row.addWidget(none_btn)
+
+        invert_btn = QPushButton('🔁反选')
+        invert_btn.clicked.connect(self.invert_selection)
+        quick_row.addWidget(invert_btn)
+        quick_row.addStretch()
+        layout.addLayout(quick_row)
+
+        # 列清单（勾选 = 显示）
+        self.list_widget = QListWidget()
+        for col in self.entries:
+            item = QListWidgetItem(self._item_text(col))
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Unchecked if col['name'] in self._hidden else Qt.Checked)
+            item.setData(Qt.UserRole, col['name'])
+            self.list_widget.addItem(item)
+        self.list_widget.itemChanged.connect(self._update_summary)
+        layout.addWidget(self.list_widget)
+
+        # 统计 + 按钮
+        self.summary_label = QLabel()
+        layout.addWidget(self.summary_label)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch()
+
+        ok_btn = QPushButton('确定')
+        ok_btn.setDefault(True)
+        ok_btn.clicked.connect(self._on_accept)
+        button_row.addWidget(ok_btn)
+
+        cancel_btn = QPushButton('取消')
+        cancel_btn.clicked.connect(self.reject)
+        button_row.addWidget(cancel_btn)
+        layout.addLayout(button_row)
+
+        self._update_summary()
+
+    @staticmethod
+    def _item_text(col):
+        """一行的显示文案：中文名（列名 / 图列）+ 属性标记（★ v6.13 支持图列）"""
+        kind = col.get('kind')
+        if kind == 'barcode':
+            src = col.get('source_label') or col.get('source')
+            return f"{col.get('label', col['name'])}    (条形码图 · 来自「{src}」)"
+        if kind == 'qrcode':
+            src = col.get('source_label') or col.get('source')
+            return f"{col.get('label', col['name'])}    (二维码图 · 来自「{src}」)"
+        text = f"{col.get('label', col['name'])}    ({col['name']})"
+        tags = []
+        if col.get('is_barcode', False):
+            tags.append('条形码')
+        if col.get('is_qrcode', False):
+            tags.append('二维码')
+        if col.get('is_required', False):
+            tags.append('必填')
+        if col.get('is_unique', False):
+            tags.append('唯一')
+        if tags:
+            text += '  【' + '·'.join(tags) + '】'
+        return text
+
+    def checked_names(self):
+        """当前勾选（要显示）的列名列表"""
+        names = []
+        for row in range(self.list_widget.count()):
+            item = self.list_widget.item(row)
+            if item.checkState() == Qt.Checked:
+                names.append(item.data(Qt.UserRole))
+        return names
+
+    def get_hidden_columns(self):
+        """要隐藏（未勾选）的键列表（★ v6.13：含条形码/二维码图列键 #barcode/#qrcode）"""
+        checked = set(self.checked_names())
+        return [e['name'] for e in self.entries if e['name'] not in checked]
+
+    def set_all(self, checked):
+        state = Qt.Checked if checked else Qt.Unchecked
+        self.list_widget.blockSignals(True)
+        for row in range(self.list_widget.count()):
+            self.list_widget.item(row).setCheckState(state)
+        self.list_widget.blockSignals(False)
+        self._update_summary()
+
+    def invert_selection(self):
+        self.list_widget.blockSignals(True)
+        for row in range(self.list_widget.count()):
+            item = self.list_widget.item(row)
+            item.setCheckState(Qt.Unchecked if item.checkState() == Qt.Checked else Qt.Checked)
+        self.list_widget.blockSignals(False)
+        self._update_summary()
+
+    def _update_summary(self, *_args):
+        shown = len(self.checked_names())
+        total = self.list_widget.count()
+        img_total = len([e for e in self.entries if e.get('kind')])
+        extra = f'（{total - img_total} 列 + {img_total} 张图）' if img_total else ''
+        if shown == 0:
+            self.summary_label.setText(f'共 {total} 项{extra} ｜ ⚠️ 一项都没勾：至少保留一项才能确定')
+        elif shown == total:
+            self.summary_label.setText(f'共 {total} 项{extra} ｜ 全部显示')
+        else:
+            self.summary_label.setText(
+                f'共 {total} 项{extra} ｜ 显示 {shown} 项，隐藏 {total - shown} 项')
+
+    def _on_accept(self):
+        """确定前兜底：一列都不勾等于列表空着，不让确定（★ 避免“表格全空”的懵状态）
+
+        ★ v6.13：要求至少勾选一列**数据列** —— 只勾条形码/二维码图列也不行：
+        数据列全隐藏时 `_visible_columns()` 会兜底显示全部，用户会以为设置没生效。
+        """
+        checked = set(self.checked_names())
+        if not [e for e in self.entries if e['name'] in checked and not e.get('kind')]:
+            notify(self, '至少要勾选一列数据列显示（否则数据列表会整张空着）', 'warn')
+            return
+        self.accept()
 
 
 class MainWindow(QMainWindow):
@@ -6190,17 +7623,23 @@ class MainWindow(QMainWindow):
         try:
             _gs = load_global_settings()
             self.global_unified_config = _gs.get('global_unified_config', None)
-            _geo = _gs.get('main_geometry')
-            if _geo and len(_geo) == 4:
-                self.setGeometry(_geo[0], _geo[1], _geo[2], _geo[3])
+            # ★ v6.11：主窗口也用同一套屏幕校验（换分辨率/拔显示器后旧坐标可能已在屏幕外）
+            # ★ v6.12：摆放必须用 place_window()（resize + move）—— setGeometry 是客户区
+            #   坐标，与设置里存的边框坐标差一个标题栏高度，每启动一次往上顶 31px
+            _safe_geo = safe_window_geometry(_gs.get('main_geometry'), (800, 800))
+            if _safe_geo:
+                place_window(self, _safe_geo)
             self._start_maximized = bool(_gs.get('main_maximized', False))
         except Exception:
             self.global_unified_config = None
             self._start_maximized = False
         self.current_rowid = None
         self.is_data_loaded = False  # 新增：标记数据是否已加载
+        self._closing = False  # ★ v6.11：窗口是否正在/已经关闭（关闭后不再起任何线程）
+        self._switching_user = False  # ★ v6.15：是不是「切换用户登录」（决定关闭时回不回登录窗口）
         self._scroll_to_last_after_load = False  # ★ v6.6：刚添加完数据，加载完成后自动翻到最新行
         self._pending_scroll_rowid = None  # ★ v6.6：刚插入记录的 rowid（用于精确回位）
+        self._detail_row = None  # ★ v6.22：详情页当前显示的是第几条（改显示设置后重画用）
         self.current_page = 0
         self.page_size = 100  # 每页显示100条记录
         self.total_pages = 0
@@ -6241,8 +7680,32 @@ class MainWindow(QMainWindow):
         if db_config:
             self._heal_settings_columns_config(settings_config, db_config)
 
+        # ★ v6.10：「数据列表」显示哪些列（隐藏列只是不显示，数据照常录入/保存/导出）。
+        #   存在本用户库 config 表的 hidden_columns 键里，跟着用户库走；
+        #   顺手丢掉已经不存在的列名（列被删/改名后残留的），必要时回写库。
+        self.hidden_columns = set()
+        try:
+            self.hidden_columns = set(self.user_db.get_hidden_columns())
+            self._sanitize_hidden_columns()
+        except Exception as e:
+            print(f"[DEBUG] 读取显示列设置失败: {str(e)}")
+            self.hidden_columns = set()
+
+        # ★ v6.22：「🔎详细信息」页显示哪些项目（字段 / 条码块 / 二维码块）—— 与显示列同一套逻辑，
+        #   存在本用户库 config 表的 hidden_detail_items 键里（存被隐藏的键，空＝全部显示）。
+        self.hidden_detail_items = set()
+        try:
+            self.hidden_detail_items = set(self.user_db.get_hidden_detail_items())
+            self._sanitize_hidden_detail_items()
+        except Exception as e:
+            print(f"[DEBUG] 读取详细信息显示设置失败: {str(e)}")
+            self.hidden_detail_items = set()
+
         self.init_ui()
         
+        # ★ v6.12：窗口显示出来后按真实边框再核一次位置（够不着就摆回屏幕中间）
+        QTimer.singleShot(0, self._ensure_window_reachable)
+
         # 延迟加载数据，让界面先显示出来，避免启动卡顿
         QTimer.singleShot(200, self.delayed_load_data)
 
@@ -6299,6 +7762,280 @@ class MainWindow(QMainWindow):
         self.columns_config = db_config
         self._heal_settings_columns_config([], db_config)
         return True
+
+    def _sanitize_hidden_columns(self, persist=False):
+        """丢掉已经不存在的隐藏列名（★ v6.10）
+
+        列被删除/改名后，config 里可能留着对不上的旧名字；不清掉的话，用户以后
+        把新列取成同样的名字会“莫名其妙一加就是隐藏的”。变化时（或 persist=True）
+        立即写回库。
+        """
+        try:
+            names = {c.get('name') for c in (self.columns_config or []) if c.get('name')}
+            # ★ v6.13：条形码/二维码图列的键也要留住（它们不在数据列名里）
+            names |= {e['name'] for e in self._display_image_columns()}
+            hidden = set(getattr(self, 'hidden_columns', None) or set())
+            keep = {n for n in hidden if n in names}
+            changed = (keep != hidden)
+            self.hidden_columns = keep
+            if changed or persist:
+                self.user_db.set_hidden_columns(sorted(keep))
+            return changed
+        except Exception as e:
+            print(f"[DEBUG] 校正显示列设置失败: {str(e)}")
+            return False
+
+    def _sanitize_hidden_detail_items(self, persist=False):
+        """丢掉已经不存在的「详细信息显示项」键（★ v6.22）
+
+        与 `_sanitize_hidden_columns` 同一套思路：列被删除/改名后，config 里可能留着
+        对不上的旧键（field:旧列名 …）。不清掉的话，用户以后把新列取成同样的名字，
+        会“莫名其妙一打开详情就看不见它”。变化时（或 persist=True）立即写回库。
+        """
+        try:
+            valid = {e['key'] for e in detail_item_entries(self.columns_config or [])}
+            hidden = set(getattr(self, 'hidden_detail_items', None) or set())
+            keep = {k for k in hidden if k in valid}
+            changed = (keep != hidden)
+            self.hidden_detail_items = keep
+            if changed or persist:
+                self.user_db.set_hidden_detail_items(sorted(keep))
+            return changed
+        except Exception as e:
+            print(f"[DEBUG] 校正详细信息显示设置失败: {str(e)}")
+            return False
+
+    def _detail_hidden_keys(self):
+        """当前被隐藏的「详细信息」项目键（★ v6.22）"""
+        return set(getattr(self, 'hidden_detail_items', None) or set())
+
+    def _detail_item_visible(self, key):
+        """「详细信息」里这一项要不要画（★ v6.22）"""
+        return key not in self._detail_hidden_keys()
+
+    def _all_detail_entries(self, columns_config=None):
+        """「详细信息」可选项目清单（★ v6.22）"""
+        cols = columns_config if columns_config is not None else (self.columns_config or [])
+        return detail_item_entries(cols)
+
+    def configure_detail_visibility(self):
+        """「🔎详细信息显示设置」入口（★ v6.22）
+
+        挑选详细信息页里显示哪些项目（字段 / 每个条码块 / 每个二维码块）→ 立即保存到
+        本用户库；如果详情页正开着，马上重画一次让效果看得见。只改显示，不动数据。
+        """
+        try:
+            self._sync_columns_config_with_db()
+        except Exception as e:
+            print(f"[DEBUG] 打开详细信息显示设置前同步列配置失败: {str(e)}")
+
+        entries = self._all_detail_entries()
+        if not entries:
+            notify(self, '当前没有可显示的详情项目，请先到「工具→🧩修改列配置」配置列', 'warn')
+            return
+
+        self._sanitize_hidden_detail_items()
+        dialog = DetailVisibilityDialog(entries, sorted(self.hidden_detail_items), self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        hidden = dialog.get_hidden_items()
+        self.hidden_detail_items = set(hidden)
+        saved = self.user_db.set_hidden_detail_items(sorted(hidden))
+
+        # 详情页正开着 → 立刻按新设置重画（没开着就不跳过去，避免打断当前操作）
+        #   ★ 真实库探针（2026-09-28）发现：表格刚重画过时 currentRow() 可能是 -1，
+        #     直接拿它重画会把详情页清空 ⇒ 退回「上一次显示的那一条」`_detail_row`，
+        #     连它也没有就只提示、不动页面。
+        try:
+            if self.tab_widget.currentWidget() is self.detail_widget:
+                row = self.data_table.currentRow()
+                if row is None or row < 0:
+                    row = getattr(self, '_detail_row', None)
+                if row is not None and 0 <= row < self.data_table.rowCount():
+                    self.show_item_detail(row=row)
+                else:
+                    notify(self, '设置已保存（详情页当前没有可显示的那一条，'
+                                 '切到数据列表点一条就能看到新的显示效果）', 'info')
+        except Exception as e:
+            print(f"[DEBUG] 按新设置重画详情失败: {str(e)}")
+
+        msg = (f'共 {len(entries)} 项，显示 {len(entries) - len(hidden)} 项、'
+               f'隐藏 {len(hidden)} 项')
+        if not saved:
+            notify(self, f'✅ 详细信息显示项已更新（本次生效）：{msg}；'
+                         f'但设置保存失败，下次启动会恢复', 'warn')
+            return
+        self.status_bar.showMessage(f'✅ 详细信息显示项已更新：{msg}', 8000)
+        notify(self, f'✅ 详细信息显示项已更新并保存：{msg}\n'
+                     f'（只影响「🔎详细信息」页显示，数据列表/录入/搜索/打印/导出都不变）',
+               'success')
+
+    def _visible_columns(self, columns_config=None):
+        """「数据列表」要显示的列（★ v6.10）
+
+        隐藏列只影响显示；为避免出现“整张表空着”的懵状态，一旦所有列都被隐藏
+        （例如列配置大改后 hidden 名字全对上了别的列），就退化为显示全部。
+        """
+        cols = list(columns_config if columns_config is not None else (self.columns_config or []))
+        hidden = set(getattr(self, 'hidden_columns', None) or set())
+        if not hidden:
+            return cols
+        visible = [c for c in cols if c.get('name') not in hidden]
+        return visible or cols
+
+    def _display_image_columns(self, columns_config=None):
+        """数据列表里的「条形码 / 二维码」图列清单（★ v6.13）
+
+        数据列表在数据列后面还会画 `<列名>条形码` / `<列名>二维码` 两张图列，以前
+        它们不在「显示列设置」清单里（只能跟着来源列一起显示/隐藏）。现在把它们也
+        当成可选条目，键名＝`<列名>#barcode` / `<列名>#qrcode`（详见模块级
+        `display_image_entries()`）。
+        """
+        cols = columns_config if columns_config is not None else (self.columns_config or [])
+        return display_image_entries(cols)
+
+    def _all_display_entries(self, columns_config=None):
+        """「显示列设置」里的全部条目＝数据列 + 它的条形码/二维码图列（★ v6.13）"""
+        cols = columns_config if columns_config is not None else (self.columns_config or [])
+        return display_entries_with_images(cols)
+
+    def _visible_image_columns(self, kind, columns_config=None):
+        """该画到数据列表里的「条形码/二维码」图列（★ v6.13：键没被隐藏才画）
+
+        kind = 'barcode' 或 'qrcode'。**这里按【全部列】算，不跟着“显示列”走** ——
+        否则“隐藏某列”会连它的图列一起没了，用户就没法单独控制图列了。
+        """
+        hidden = set(getattr(self, 'hidden_columns', None) or set())
+        return [e for e in self._display_image_columns(columns_config)
+                if e.get('kind') == kind and e['name'] not in hidden]
+
+    def _visible_display_entries(self, columns_config=None):
+        """当前显示的全部条目，**与数据列表的表头顺序对齐**（★ v6.13）
+
+        表头顺序＝数据列 → 条形码图列 → 二维码图列（与 `_update_table_with_data` 一致），
+        所以这里的顺序不能变，否则“表头右键→隐藏这一列”会点错对象。
+        """
+        return (self._visible_columns(columns_config)
+                + self._visible_image_columns('barcode', columns_config)
+                + self._visible_image_columns('qrcode', columns_config))
+
+    def _display_entry_label(self, key):
+        """显示列设置里的键 → 中文名（★ v6.13，状态栏/提示用）"""
+        return display_entry_label(self.columns_config or [], key)
+
+    def configure_column_visibility(self):
+        """「👁️显示列设置」入口（★ v6.10）
+
+        挑选数据列表里显示哪些列 → 立即保存到本用户库并刷新（表格 + 统计）。
+        只改显示，不动数据、不动表结构。
+        """
+        try:
+            self._sync_columns_config_with_db()
+        except Exception as e:
+            print(f"[DEBUG] 打开显示列设置前同步列配置失败: {str(e)}")
+
+        cols = [dict(c) for c in (self.columns_config or [])]
+        if not cols:
+            notify(self, '当前没有可显示的列，请先到「工具→🧩修改列配置」配置列', 'warn')
+            return
+
+        self._sanitize_hidden_columns()
+        # ★ v6.13：对话框内部会把条形码/二维码图列也展开成条目（display_entries_with_images），
+        #   所以这里传【数据列】即可。
+        dialog = ColumnVisibilityDialog(cols, sorted(self.hidden_columns), self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        hidden = dialog.get_hidden_columns()
+        self.hidden_columns = set(hidden)
+        saved = self.user_db.set_hidden_columns(sorted(hidden))
+
+        entries = self._all_display_entries(cols)
+        img_total = len([e for e in entries if e.get('kind')])
+        shown = len([e for e in entries if e['name'] not in self.hidden_columns])
+        # 表头/统计都要重建（走一次正常刷新，和自动跳行等逻辑保持一致）
+        self.current_rowid = None
+        try:
+            self.sort_orders = {}
+        except Exception:
+            pass
+        self.load_data()
+
+        msg = (f'共 {len(entries)} 项（{len(cols)} 列 + {img_total} 张图），'
+               f'显示 {shown} 项、隐藏 {len(hidden)} 项')
+        if not saved:
+            notify(self, f'✅ 显示列已更新（本次生效）：{msg}；但设置保存失败，下次启动会恢复', 'warn')
+            return
+        self.status_bar.showMessage(f'✅ 显示列已更新：{msg}', 8000)
+        notify(self, f'✅ 显示列已更新并保存：{msg}\n（隐藏只影响数据列表显示，数据照常录入/保存/搜索/导出）',
+               'success')
+
+    def show_header_context_menu(self, position):
+        """表头右键菜单（★ v6.10）：显示列设置 / 全部显示 / 隐藏当前列"""
+        menu = QMenu(self)
+
+        visibility_action = QAction('👁️ 显示列设置…', self)
+        visibility_action.triggered.connect(self.configure_column_visibility)
+        menu.addAction(visibility_action)
+
+        show_all_action = QAction('✅ 全部显示', self)
+        show_all_action.triggered.connect(self.show_all_columns)
+        menu.addAction(show_all_action)
+
+        # 右键点在哪一列上，就提供“隐藏这一列”
+        # ★ v6.13：条目与表头一一对应（数据列 + 条形码/二维码图列），图列也能单独隐藏
+        entries = self._visible_display_entries()
+        col = self.data_table.horizontalHeader().logicalIndexAt(position)
+        if 0 <= col < len(entries) and len(entries) > 1:
+            entry = entries[col]
+            name = entry.get('name')
+            label = entry.get('label', name)
+            hide_action = QAction(f'🚫 隐藏「{label}」', self)
+            hide_action.triggered.connect(lambda _checked=False, n=name: self.hide_column(n))
+            menu.addAction(hide_action)
+
+        menu.exec(self.data_table.horizontalHeader().mapToGlobal(position))
+
+    def _apply_hidden_columns(self, hidden, action_text):
+        """保存隐藏列设置并刷新表格/统计（★ v6.10 内部公用）"""
+        self.hidden_columns = set(hidden or set())
+        saved = self.user_db.set_hidden_columns(sorted(self.hidden_columns))
+        self.current_rowid = None
+        try:
+            self.sort_orders = {}
+        except Exception:
+            pass
+        self.load_data()
+
+        total = len(self._all_display_entries())
+        shown = len(self._visible_display_entries())
+        msg = f'{action_text}：共 {total} 项，显示 {shown} 项'
+        self.status_bar.showMessage(f'✅ {msg}', 8000)
+        if saved:
+            notify(self, f'✅ {msg}', 'success')
+        else:
+            notify(self, f'✅ {msg}；但设置保存失败，下次启动会恢复', 'warn')
+
+    def show_all_columns(self):
+        """全部列都显示（清空隐藏设置）（★ v6.10）"""
+        self._apply_hidden_columns(set(), '已恢复为显示全部列')
+
+    def hide_column(self, name):
+        """隐藏单列 / 单个图列（表头右键「隐藏这一列」用）（★ v6.10；★ v6.13 支持图列）"""
+        if not name:
+            return
+        # ★ v6.13：图列可以随便藏；但**数据列至少要留一列**（全藏了数据列表会兜底
+        #   显示全部，用户会以为没生效）
+        entries = self._visible_display_entries()
+        remaining_data = [e for e in entries
+                          if not e.get('kind') and e.get('name') != name]
+        if not remaining_data:
+            notify(self, '至少要保留一列数据列显示', 'warn')
+            return
+        hidden = set(self.hidden_columns or set())
+        hidden.add(name)
+        self._apply_hidden_columns(hidden, f'已隐藏「{self._display_entry_label(name)}」')
 
     def _background_backup(self):
         """线程池里执行的自动备份
@@ -6460,10 +8197,29 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """关闭窗口时取消所有活跃线程"""
+        # ★ v6.11：先置位表示“正在关闭” —— 关闭后绝不允许再新建线程。
+        #   原因：构造窗口时会挂一个 200ms 后的 delayed_load_data 定时器，如果窗口在
+        #   200ms 内就被关掉（或关掉后事件循环再转一圈），这个定时器仍会启动
+        #   LoadDataWorker（而刚才关窗口时已经把数据库连接关了，它还会报
+        #   Cannot operate on a closed database）；这个 QThread 在解释器退出时被析构
+        #   → Qt qFatal("QThread: Destroyed while thread is still running") →
+        #   进程无任何提示地退出（实测：重复跑测试脚本偶发 0xC0000409）。
+        self._closing = True
+        for timer_name in ('backup_timer', 'maintenance_timer'):
+            try:
+                timer = getattr(self, timer_name, None)
+                if timer is not None:
+                    timer.stop()
+            except Exception:
+                pass
         # 保存窗口几何/最大化（全局设置持久化）
         try:
             data = load_global_settings()
-            data['main_geometry'] = [self.x(), self.y(), self.width(), self.height()]
+            # ★ v6.12：最大化时存 normalGeometry()（否则存的是 -8/-31 残影坐标，下次启动
+            #   标题栏就在屏幕外了），并且过一遍 safe_window_geometry() 保证一定看得见
+            geo = window_geometry_for_save(self, (800, 800))
+            if geo:
+                data['main_geometry'] = geo
             data['main_maximized'] = self.isMaximized()
             if self.global_unified_config is not None:
                 data['global_unified_config'] = self.global_unified_config
@@ -6491,8 +8247,26 @@ class MainWindow(QMainWindow):
         except:
             pass
         self.user_db.close()
-        if self.parent_window and not self.parent_window.isVisible():
-            self.parent_window.show()
+        # ★ v6.15：关闭就是关闭。
+        #   以前这里无条件把登录窗口又显示出来，结果“点关闭”只是回到登录窗口、程序
+        #   不退出（用户点名要求改掉：「点程序关闭就关闭，不用返回到登录窗口」）。
+        #   现在只有走【切换用户登录】才会回到登录窗口，其余一律真退出。
+        if getattr(self, '_switching_user', False) and self.parent_window:
+            try:
+                self.parent_window.show()
+                self.parent_window.raise_()
+                self.parent_window.activateWindow()
+                print("[DEBUG] 已切回登录窗口（程序不退出）")
+            except Exception as e:
+                print(f"[DEBUG] 显示登录窗口失败: {str(e)}")
+        else:
+            print("[DEBUG] 关闭主窗口 → 退出程序")
+            try:
+                app = QApplication.instance()
+                if app is not None:
+                    app.quit()
+            except Exception as e:
+                print(f"[DEBUG] 退出程序失败: {str(e)}")
         event.accept()
 
     def periodic_maintenance(self):
@@ -6563,8 +8337,42 @@ class MainWindow(QMainWindow):
         # 添加到主布局的合适位置
         self.centralWidget().layout().insertLayout(1, pagination_layout)
 
+    def _ensure_window_reachable(self):
+        """窗口显示后按真实边框核一次位置（★ v6.12）
+
+        正常路径不会触发（启动时已经用 safe_window_geometry() + place_window() 摆好了）；
+        这是最后一道保险：万一多屏/DPI 变化让窗口管理器把窗口摆到够不着的地方，
+        就把它拉回屏幕中间。**窗口已经关了就别动**（`_closing`）。
+        """
+        if getattr(self, '_closing', False):
+            return
+        try:
+            ensure_window_on_screen(self)
+        except Exception as e:
+            print(f"[DEBUG] 窗口位置核对失败: {str(e)}")
+
+    def reset_window_position(self):
+        """🪟 把窗口摆回屏幕中间（★ v6.12，工具菜单入口）
+
+        给「窗口跑到屏幕外、鼠标抓不到标题栏」留的手动后路：菜单栏在客户区顶部，
+        只要客户区还看得见就点得到（快捷键 Ctrl+Alt+C 也可以）。
+        """
+        try:
+            if self.isMaximized() or self.isFullScreen():
+                self.showNormal()
+        except Exception:
+            pass
+        if center_window_on_screen(self):
+            notify(self, '窗口已摆回屏幕中间', 'success')
+        else:
+            notify(self, '没能拿到屏幕信息，无法重置窗口位置', 'warn')
+
     def delayed_load_data(self):
         """延迟加载数据，先让界面显示出来"""
+        # ★ v6.11：窗口已经关了（200ms 内被关掉）就别再起加载线程
+        if getattr(self, '_closing', False):
+            print("[DEBUG] 窗口已关闭，跳过延迟加载数据")
+            return
         try:
             # 显示加载提示
             self.status_bar.showMessage("正在加载数据，请稍候...")
@@ -6637,8 +8445,12 @@ class MainWindow(QMainWindow):
         
         # 详情视图
         self.detail_widget = QWidget()
-        self.detail_layout = QVBoxLayout()
-        self.detail_widget.setLayout(self.detail_layout)
+        detail_outer = QVBoxLayout()
+        self.detail_widget.setLayout(detail_outer)
+        # ★ v6.16：详情页顶部常驻「⬆上一条 / ⬇下一条」导航（不随详情内容被清空）
+        detail_outer.addLayout(self._build_detail_nav())
+        self.detail_layout = QVBoxLayout()   # 详情内容（每次重建）
+        detail_outer.addLayout(self.detail_layout, 1)
         self.tab_widget.addTab(self.detail_widget, '📝详细信息')
         
         # 统计视图
@@ -6662,9 +8474,25 @@ class MainWindow(QMainWindow):
 
         # 添加表头排序功能
         self.data_table.horizontalHeader().sectionClicked.connect(self.sort_table_by_column)
+
+        # ★ v6.10：表头右键 → 显示列设置（“想只看哪几列”最顺手的位置）
+        self.data_table.horizontalHeader().setContextMenuPolicy(Qt.CustomContextMenu)
+        self.data_table.horizontalHeader().customContextMenuRequested.connect(
+            self.show_header_context_menu)
         
-        # 初始化排序状态
-        self.sort_orders = {}  # 存储每列的排序状态：None(未排序), 'asc'(升序), 'desc'(降序)
+        # 初始化排序状态（★ v6.14：三态 —— 升序 / 降序 / 默认（不排序））
+        #   * 只记“现在排的是哪一列 + 什么方向”，按【数据列名】记（不是列序号）——
+        #     隐藏列/增减列之后也不会排错列；
+        #   * 排序在【数据层】做（渲染前对整份数据排），所以刷新/搜索/翻页后顺序一致，
+        #     而且 rowid 与行内容不会错位；
+        #   * `sort_orders` 是 v6.14 之前的旧结构，保留为空字典只为兼容别处的复位代码。
+        self.sort_column_name = None   # 当前排序的数据列名（None＝默认排序）
+        self.sort_order = None         # 'asc' / 'desc' / None
+        self._render_source_data = []  # 最近一次拿到的原始数据（排序只在这上面做，不重新查库）
+        self._render_source_keyword = None  # 最近一次是不是搜索结果（要把高亮一起重画）
+        self.sort_orders = {}
+        # 关掉 Qt 内置排序：否则点表头时它自己也会排一次，和我们的三态排序打架
+        self.data_table.setSortingEnabled(False)
 
         # 添加快捷键支持
         self.setup_shortcuts()
@@ -6688,33 +8516,145 @@ class MainWindow(QMainWindow):
         self.edit_shortcut = QShortcut(QKeySequence("Ctrl+E"), self)
         self.edit_shortcut.activated.connect(self.edit_selected_data)
 
+        # ★ v6.16：详情页翻上/下一条（Alt+↑ / Alt+↓，只在详情页生效）
+        self.detail_prev_shortcut = QShortcut(QKeySequence("Alt+Up"), self)
+        self.detail_prev_shortcut.activated.connect(
+            lambda: self.detail_goto_offset(-1, need_detail_tab=True))
+        self.detail_next_shortcut = QShortcut(QKeySequence("Alt+Down"), self)
+        self.detail_next_shortcut.activated.connect(
+            lambda: self.detail_goto_offset(1, need_detail_tab=True))
+
 
     def sort_table_by_column(self, column_index):
-        """根据点击的表头列进行排序"""
-        # 获取当前列的排序状态
-        current_order = self.sort_orders.get(column_index, None)
-        
-        # 切换排序状态：None -> asc -> desc -> None
-        if current_order is None:
-            new_order = 'asc'
-        elif current_order == 'asc':
-            new_order = 'desc'
-        else:
-            new_order = None
-        
-        # 更新排序状态
-        self.sort_orders[column_index] = new_order
-        
-        if new_order is None:
-            # 取消排序，恢复原始顺序
-            self.load_data()
+        """表头点击 → **升序 → 降序 → 默认（不排序）** 三态循环（★ v6.14）
+
+        用户要求：「点表头排序，除了正反排序，还要有默认排序，就是不排序」。
+        要点：
+          * 状态按【数据列名】记（不按列序号）—— 隐藏列/增减列也不会排错列；
+          * 排序在**数据层**做（渲染前把整份数据排一遍），所以刷新、搜索之后
+            顺序都一致，而且 **rowid 与行内容不会错位**（老实现是原地改单元格文本，
+            第一列的 rowid 不跟着走 —— 排完序再编辑/删除会动错行）；
+          * 点第三下回到「默认排序」＝数据库里的原始顺序（按 rowid 升序）。
+        """
+        try:
+            entries = self._visible_display_entries()
+        except Exception:
+            entries = []
+        if not (0 <= column_index < len(entries)):
             return
-        
-        # 执行排序
-        self.perform_sorting(column_index, new_order)
+        entry = entries[column_index]
+        if entry.get('kind'):
+            # 条形码/二维码图列没有可比的文本，不参与排序
+            self.status_bar.showMessage('条形码/二维码 图列不参与排序（请点数据列的表头）', 6000)
+            return
+
+        name = entry.get('name')
+        if name == self.sort_column_name:
+            # 同一列循环：升序 → 降序 → 默认（不排序）
+            self.sort_order = {'asc': 'desc', 'desc': None}.get(self.sort_order, 'asc')
+            if self.sort_order is None:
+                self.sort_column_name = None
+        else:
+            # 换一列：从升序开始
+            self.sort_column_name = name
+            self.sort_order = 'asc'
+
+        self._render_from_source()
+        self._show_sort_status(name)
+
+    def _show_sort_status(self, name):
+        """状态栏说明当前是哪种排序（★ v6.14，点了要能看到效果）"""
+        label = self._display_entry_label(name) if name else ''
+        if self.sort_order == 'asc':
+            msg = f'🔼 按「{label}」升序（再点一次＝降序，第三次＝默认不排序）'
+        elif self.sort_order == 'desc':
+            msg = f'🔽 按「{label}」降序（再点一次＝默认不排序）'
+        else:
+            msg = '↩️ 已恢复默认排序（不排序，按录入顺序）'
+        try:
+            self.status_bar.showMessage(msg, 8000)
+        except Exception:
+            pass
+
+    def _render_from_source(self, columns_config=None):
+        """按当前排序状态，把「最近一次拿到的数据」重画一遍（★ v6.14）
+
+        排序只在这份内存数据上做（不重新查库、不闪屏）；搜索/刷新之后也走这里，
+        所以「搜索后点表头」和「排序后按 F5」都不会把排序状态弄丢。
+        """
+        cols = columns_config if columns_config is not None else self.columns_config
+        src = list(getattr(self, '_render_source_data', None) or [])
+        keyword = getattr(self, '_render_source_keyword', None)
+        data = self._sorted_rows(src, cols)
+        if keyword:
+            self.display_search_results(data, keyword)
+        else:
+            self._update_table_with_data(data, cols)
+        self._refresh_sort_indicator()
+
+    def _sorted_rows(self, data, columns_config=None):
+        """按当前排序状态排序（★ v6.14）：没排序就原样返回；空值永远排最后
+
+        * 比的是**单元格里看到的文本**（与 `_value_by_name()` 一致，NULL 当空串）；
+        * 数字按数值比（1 / 2 / 10，而不是 1 / 10 / 2）；
+        * 排序列被删/改名了 → 排序状态自动失效，回到默认顺序。
+        """
+        rows = list(data or [])
+        if not rows or not self.sort_order or not self.sort_column_name:
+            return rows
+        cols = list(columns_config if columns_config is not None else (self.columns_config or []))
+        names = [c.get('name') for c in cols]
+        if self.sort_column_name not in names:
+            self.sort_column_name = None
+            self.sort_order = None
+            return rows
+
+        col_index = self._table_column_index(cols)
+        filled, empty = [], []
+        for row in rows:
+            try:
+                text = self._value_by_name(col_index, row[1:], self.sort_column_name)
+            except Exception:
+                text = ''
+            if text is None or str(text).strip() == '':
+                empty.append(row)
+            else:
+                filled.append((sort_key_for_text(text), row))
+        filled.sort(key=lambda pair: pair[0], reverse=(self.sort_order == 'desc'))
+        return [row for _key, row in filled] + empty
+
+    def _refresh_sort_indicator(self):
+        """按当前状态画表头箭头（★ v6.14：默认排序时不显示箭头）
+
+        注意：重建表头（`setHorizontalHeaderLabels`）会把箭头洗掉，所以每次渲染完
+        都要调用一次（`_render_from_source()` 末尾会调）。
+        """
+        try:
+            header = self.data_table.horizontalHeader()
+            model = header.model()
+            entries = self._visible_display_entries()
+            names = [e.get('name') for e in entries]
+            active = None
+            if self.sort_order and self.sort_column_name in names:
+                active = names.index(self.sort_column_name)
+            for col in range(header.count()):
+                text = str(model.headerData(col, Qt.Horizontal) or '')
+                for mark in (' ↑', ' ↓'):
+                    if text.endswith(mark):
+                        text = text[:-len(mark)]
+                if active is not None and col == active:
+                    text += ' ↑' if self.sort_order == 'asc' else ' ↓'
+                model.setHeaderData(col, Qt.Horizontal, text)
+        except Exception as e:
+            print(f"[DEBUG] 刷新排序箭头失败: {str(e)}")
 
     def perform_sorting(self, column_index, order):
-        """执行实际的表格排序"""
+        """【已废弃（★ v6.14），不再被调用 —— 别再启用】
+
+        为什么废弃：它只把单元格**文本**重新写一遍，不搬 `Qt.UserRole` 里存的 rowid，
+        所以排完序后第一列的 rowid 与行内容错位（再编辑/删除会动错行）；也没有「默认排序」
+        第三态。新实现在 `sort_table_by_column()` / `_render_from_source()` / `_sorted_rows()`。
+        """
         try:
             # 获取当前显示的所有数据（包括搜索后的数据）
             row_count = self.data_table.rowCount()
@@ -6783,7 +8723,7 @@ class MainWindow(QMainWindow):
             print(f"排序失败: {str(e)}")
 
     def update_header_sort_indicator(self, sorted_column, order):
-        """更新表头显示排序指示器"""
+        """【已废弃（★ v6.14）】旧的表头箭头 —— 现在用 `_refresh_sort_indicator()`（不会再洗掉箭头）"""
         header = self.data_table.horizontalHeader()
         
         # 清除所有列的排序指示器
@@ -6846,11 +8786,14 @@ class MainWindow(QMainWindow):
         refresh_action.triggered.connect(self.load_data)
         file_menu.addAction(refresh_action)
         
-        logout_action = QAction('🚪退出登录', self)
-        logout_action.triggered.connect(self.logout)
-        file_menu.addAction(logout_action)
-        
-        exit_action = QAction('🚪退出', self)
+        # ★ v6.15：换人登录用「切换用户登录」；「退出程序」是真的退出（不再回登录窗口）
+        switch_user_action = QAction('👤切换用户登录', self)
+        switch_user_action.setStatusTip('回到登录窗口换其它用户登录（程序不退出）')
+        switch_user_action.triggered.connect(self.switch_user)
+        file_menu.addAction(switch_user_action)
+
+        exit_action = QAction('❌退出程序', self)
+        exit_action.setStatusTip('保存并关闭程序（就是退出，不再回登录窗口）')
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
         
@@ -6865,6 +8808,25 @@ class MainWindow(QMainWindow):
         modify_columns_action = QAction('🧩修改列配置', self)
         modify_columns_action.triggered.connect(self.modify_columns_config)
         tools_menu.addAction(modify_columns_action)
+
+        # ★ v6.10：数据列表只显示选中的列（只影响显示，数据照常录入/保存/导出）
+        visibility_action = QAction('👁️显示列设置', self)
+        visibility_action.triggered.connect(self.configure_column_visibility)
+        tools_menu.addAction(visibility_action)
+
+        # ★ v6.22：详细信息页只显示选中的项目（字段 / 每列的条码块 / 二维码块）
+        detail_visibility_action = QAction('🔎详细信息显示设置', self)
+        detail_visibility_action.setStatusTip('选择「详细信息」页里显示哪些项目和哪些条码/二维码')
+        detail_visibility_action.triggered.connect(self.configure_detail_visibility)
+        tools_menu.addAction(detail_visibility_action)
+
+        # ★ v6.12：窗口跑到屏幕外时的救回入口（菜单栏在客户区顶部，客户区还看得见就点得到）
+        tools_menu.addSeparator()
+        reset_window_action = QAction('🪟窗口位置重置（居中显示）', self)
+        reset_window_action.setShortcut('Ctrl+Alt+C')
+        reset_window_action.setStatusTip('窗口跑到屏幕外、抓不住标题栏时，用这个把它摆回屏幕中间')
+        reset_window_action.triggered.connect(self.reset_window_position)
+        tools_menu.addAction(reset_window_action)
         
         # 帮助菜单
         help_menu = menubar.addMenu('📖帮助')
@@ -6920,6 +8882,10 @@ class MainWindow(QMainWindow):
     
     def load_data(self):
         """使用多线程异步加载数据"""
+        # ★ v6.11：已关闭的窗口不再起线程（退出时析构运行中的 QThread 会让进程无提示退出）
+        if getattr(self, '_closing', False):
+            print("[DEBUG] 窗口正在关闭，忽略本次数据加载")
+            return
         try:
             self.status_bar.showMessage("正在加载数据，请稍候...")
             
@@ -6952,7 +8918,11 @@ class MainWindow(QMainWindow):
         try:
             data = result['data']
             columns_config = result['columns_config']
-            self._update_table_with_data(data, columns_config)
+            # ★ v6.14：记下这批数据（排序只在这份内存数据上做，刷新后排序状态不丢；
+            #   排序期间不会重新查库，所以不会闪屏）
+            self._render_source_data = data
+            self._render_source_keyword = None
+            self._render_from_source(columns_config)
             self.update_stats()
             self.update_status_bar()
             self.is_data_loaded = True
@@ -7035,33 +9005,59 @@ class MainWindow(QMainWindow):
         return '' if value is None else str(value)
 
     def _update_table_with_data(self, data, columns_config=None):
-        """在主线程中更新表格显示（提取公共逻辑）"""
+        """在主线程中更新表格显示（提取公共逻辑）
+
+        ★ v6.10：表头与单元格只渲染 `_visible_columns()` —— 用户挑的“显示列”；
+        隐藏的列数据仍然照常加载/保存，只是不画到表格里（也不会画它的条码图）。
+        """
         if columns_config is None:
             columns_config = self.columns_config
+        # 「全部列」用于按列名取值（下标表），「显示列」用于画表格，两者分开
+        all_columns = list(columns_config or [])
+        # 兼容不完整的调用方（测试里的替身对象没有 _visible_columns，就当作全部显示）
+        _visible_of = getattr(self, '_visible_columns', None)
+        columns_config = _visible_of(all_columns) if callable(_visible_of) else all_columns
 
         # 设置表头
         headers = [col['label'] for col in columns_config]
-        
-        # 添加条形码和二维码列
-        barcode_cols = [col for col in columns_config if col.get('is_barcode', False)]
-        qrcode_cols = [col for col in columns_config if col.get('is_qrcode', False)]
+
+        # ★ v6.13：条形码/二维码图列也受「显示列设置」控制，且按【全部列】算
+        #   （不跟着“显示列”走）—— 否则隐藏某个数据列会连带把它的图列一起弄没，
+        #   用户就没法单独控制图列了。
+        _img_of = getattr(self, '_visible_image_columns', None)
+        if callable(_img_of):
+            barcode_cols = _img_of('barcode', all_columns)
+            qrcode_cols = _img_of('qrcode', all_columns)
+        else:
+            # 测试替身（没有新方法）：退回旧行为（按显示列过滤），但表头/取值仍走同一套
+            # 图列条目结构（label 已经带「条形码」后缀、source 指向来源列）
+            barcode_cols = display_image_entries(
+                [c for c in columns_config if c.get('is_barcode', False)])
+            qrcode_cols = display_image_entries(
+                [c for c in columns_config if c.get('is_qrcode', False)
+                 and not c.get('is_barcode', False)])
         
         for col in barcode_cols:
-            headers.append(f"{col['label']}条形码")
+            headers.append(col.get('label') or f"{col.get('name')}条形码")
         
         for col in qrcode_cols:
-            headers.append(f"{col['label']}二维码")
+            headers.append(col.get('label') or f"{col.get('name')}二维码")
         
         self.data_table.setColumnCount(len(headers))
         self.data_table.setHorizontalHeaderLabels(headers)
         
         # 加载数据
         self.data_table.setRowCount(len(data))
+        # ★ v6.13：必须先清掉上一次留下的 cellWidget —— setRowCount/setColumnCount 都不会
+        #   动 cellWidget，而“显示列”一变，图表头的位置就会变（上一个条码图会正好盖住
+        #   新的数据单元格，用户看到的是旧图）。clearContents() 会连 item 和 widget 一起清。
+        self.data_table.clearContents()
 
         # ★ v6.7：按【列名】取值，而不是按位置。
         #   配置与表结构万一不一致（或顺序不同），也不会串列、也不会把 NULL 显示成
         #   “None”文本（旧版把 None 直接 str() 出来，用户以为数据丢了）。
-        col_index = self._table_column_index(columns_config)
+        # ★ v6.10：下标表按【全部列】建，显示列只是它的子集，照样能按列名取到值。
+        col_index = self._table_column_index(all_columns)
 
         def _value_of(col_name, row_values):
             return self._value_by_name(col_index, row_values, col_name)
@@ -7092,24 +9088,45 @@ class MainWindow(QMainWindow):
                 item.setBackground(QColor(color))
                 item.setForeground(QColor('#333333'))
                 item.setTextAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+                # ★ v6.18：不符合该列 Code128 子集的值 → 字体换成反差明显的深红 + tooltip
+                if col_idx < len(columns_config):
+                    mark_barcode_mismatch(item, columns_config[col_idx], raw)
                 self.data_table.setItem(row_idx, col_idx, item)
             
             # 添加条形码
             col_offset = len(columns_config)
             for col in barcode_cols:
-                barcode_value = _value_of(col['name'], row_values)
-                barcode_img = self.generate_barcode(barcode_value) if barcode_value else None
+                # ★ v6.13：图列条目用 source 指向来源列（数据列自己没 source）
+                barcode_value = _value_of(col.get('source') or col['name'], row_values)
+                _bg = barcode_background_for(barcode_value, col.get('barcode_format', 'auto'),
+                                            col.get('barcode_subset', 'auto'))
+                barcode_img = (self.generate_barcode(barcode_value,
+                                                     col.get('barcode_format', 'auto'),
+                                                     col.get('barcode_subset', 'auto'),
+                                                     background=_bg)
+                               if barcode_value else None)
                 if barcode_img:
-                    label = QLabel()
-                    label.setPixmap(QPixmap.fromImage(barcode_img))
+                    # ★ v6.21：缩略图（行高不变）+ 双击放大（放大后可直接扫）
+                    label = BarcodeZoomLabel()
+                    label.setPixmap(self.barcode_preview_pixmap(barcode_img))
                     label.setAlignment(Qt.AlignCenter)
-                    label.setStyleSheet(f"background-color: {color};")
+                    # ★ v6.20：不符合子集的条码图用浅红底（图片自身也已经是浅红底）
+                    label.setStyleSheet(f"background-color: {_bg or color};")
+                    # ★ v6.19：悬停就能看到这张条码实际用的哪个子集（起始符/是否回退）
+                    label.setToolTip(describe_barcode_encoding(
+                        barcode_value, col.get('barcode_format', 'auto'),
+                        col.get('barcode_subset', 'auto'))
+                        + '\n（表格里是缩略图 —— 双击这张条码可放大，放大后就能直接扫）')
+                    label.doubleClicked.connect(partial(
+                        self.show_barcode_zoom, barcode_value,
+                        col.get('barcode_format', 'auto'),
+                        col.get('barcode_subset', 'auto'), _bg))
                     self.data_table.setCellWidget(row_idx, col_offset, label)
                 col_offset += 1
             
             # 添加二维码
             for col in qrcode_cols:
-                qrcode_value = _value_of(col['name'], row_values)
+                qrcode_value = _value_of(col.get('source') or col['name'], row_values)
                 qrcode_img = self.generate_qrcode(qrcode_value) if qrcode_value else None
                 if qrcode_img:
                     label = QLabel()
@@ -7151,8 +9168,8 @@ class MainWindow(QMainWindow):
         
         stats_form.addRow(QLabel('总记录数:'), QLabel(str(total_count)))
         
-        # 添加列统计
-        for col in self.columns_config:
+        # 添加列统计（★ v6.10：只统计“数据列表里显示的那些列”，与看到的一致）
+        for col in self._visible_columns():
             if col['type'] in ['INTEGER', 'REAL']:
                 # 计算数值列的总和、平均值等
                 self.user_db.cursor.execute(f'SELECT SUM({col["name"]}), AVG({col["name"]}), MIN({col["name"]}), MAX({col["name"]}) FROM data')
@@ -7221,6 +9238,9 @@ class MainWindow(QMainWindow):
                     item.setBackground(QColor(color))
                     item.setForeground(QColor('#333333'))  # 深色文字提高可读性
                     
+                    # ★ v6.18：不符合该列 Code128 子集的值 → 字体换成反差明显的深红
+                    mark_barcode_mismatch(item, col, item.text())
+                    
                     # 设置对齐方式
                     item.setTextAlignment(Qt.AlignVCenter | Qt.AlignLeft)
                     
@@ -7231,12 +9251,27 @@ class MainWindow(QMainWindow):
                 barcode_cols = [col for col in self.columns_config if col.get('is_barcode', False)]
                 for col in barcode_cols:
                     barcode_value = self._value_by_name(col_index, row_values, col['name'])
-                    barcode_img = self.generate_barcode(barcode_value) if barcode_value else None
+                    _bg = barcode_background_for(barcode_value, col.get('barcode_format', 'auto'),
+                                                col.get('barcode_subset', 'auto'))
+                    barcode_img = (self.generate_barcode(
+                        barcode_value, col.get('barcode_format', 'auto'),
+                        col.get('barcode_subset', 'auto'), background=_bg)
+                        if barcode_value else None)
                     if barcode_img:
-                        label = QLabel()
-                        label.setPixmap(QPixmap.fromImage(barcode_img))
+                        # ★ v6.21：缩略图（行高不变）+ 双击放大（放大后可直接扫）
+                        label = BarcodeZoomLabel()
+                        label.setPixmap(self.barcode_preview_pixmap(barcode_img))
                         label.setAlignment(Qt.AlignCenter)
-                        label.setStyleSheet(f"background-color: {color};")
+                        label.setStyleSheet(f"background-color: {_bg or color};")
+                        # ★ v6.19：悬停看实际用的哪个子集
+                        label.setToolTip(describe_barcode_encoding(
+                            barcode_value, col.get('barcode_format', 'auto'),
+                            col.get('barcode_subset', 'auto'))
+                            + '\n（表格里是缩略图 —— 双击这张条码可放大，放大后就能直接扫）')
+                        label.doubleClicked.connect(partial(
+                            self.show_barcode_zoom, barcode_value,
+                            col.get('barcode_format', 'auto'),
+                            col.get('barcode_subset', 'auto'), _bg))
                         self.data_table.setCellWidget(row_idx, col_offset, label)
                     col_offset += 1
                 
@@ -7299,11 +9334,34 @@ class MainWindow(QMainWindow):
         """搜索完成回调（主线程）"""
         self._cleanup_worker(getattr(self, 'search_worker', None))
         self._cleanup_finished_workers()
-        self.display_search_results(data, keyword)
+        # ★ v6.14：搜索结果也当“当前数据源”——点表头排序时在（高亮过的）结果里排，
+        #   而不是把搜索结果丢掉重新加载全部数据
+        self._render_source_data = data
+        self._render_source_keyword = keyword
+        self._render_from_source()
 
     def display_search_results(self, data, keyword):
-        """显示搜索结果"""
+        """显示搜索结果
+
+        ★ v6.10：与数据列表一样，只渲染「显示列」（隐藏列不画，数据也没丢，
+        清除搜索/刷新后就回来）。
+        """
+        # ★ v6.10：搜索结果的表头/列数按当前显示列重建（切换显示列后立即搜索也不会错位）
+        visible = self._visible_columns(self.columns_config)
+        # ★ v6.13：条形码/二维码图列单独受显示列设置控制（且不跟着“显示列”走）
+        barcode_cols = self._visible_image_columns('barcode', self.columns_config)
+        qrcode_cols = self._visible_image_columns('qrcode', self.columns_config)
+        headers = [col['label'] for col in visible]
+        headers += [col.get('label') or f"{col.get('name')}条形码" for col in barcode_cols]
+        headers += [col.get('label') or f"{col.get('name')}二维码" for col in qrcode_cols]
+        self.data_table.setColumnCount(len(headers))
+        self.data_table.setHorizontalHeaderLabels(headers)
         self.data_table.setRowCount(len(data))
+        # ★ v6.13：同样要清掉上一次遗留的 cellWidget（与 _update_table_with_data 同理）
+        self.data_table.clearContents()
+
+        # ★ v6.7：按列名取值；★ v6.10：下标表按【全部列】建
+        col_index = self._table_column_index(self.columns_config)
         
         # 马卡龙色系交替行颜色
         colors = [
@@ -7323,28 +9381,32 @@ class MainWindow(QMainWindow):
             color = colors[row_idx % len(colors)]
             
             # 高亮显示匹配的文本
-            for col_idx, value in enumerate(row_values):
-                if col_idx < len(self.columns_config):  # 只处理数据列
-                    display_text = str(value) if value else ""
-                    
-                    # 高亮匹配的关键词
-                    if keyword.lower() in str(value).lower():
-                        display_text = self.highlight_keyword(str(value), keyword)
-                    
-                    item = QTableWidgetItem(display_text)
-                    item.setData(Qt.UserRole, rowid)
-                    
-                    # 设置背景色和文本颜色
-                    item.setBackground(QColor(color))
-                    item.setForeground(QColor('#333333'))
-                    
-                    # 设置对齐方式
-                    item.setTextAlignment(Qt.AlignVCenter | Qt.AlignLeft)
-                    
-                    self.data_table.setItem(row_idx, col_idx, item)
+            for col_idx, col in enumerate(visible):
+                value = self._value_by_name(col_index, row_values, col['name'])
+                display_text = value
+                
+                # 高亮匹配的关键词
+                if value and keyword and keyword.lower() in value.lower():
+                    display_text = self.highlight_keyword(value, keyword)
+                
+                item = QTableWidgetItem(display_text)
+                item.setData(Qt.UserRole, rowid)
+                
+                # 设置背景色和文本颜色
+                item.setBackground(QColor(color))
+                item.setForeground(QColor('#333333'))
+                
+                # ★ v6.18：不符合该列 Code128 子集的值 → 字体换成反差明显的深红
+                mark_barcode_mismatch(item, col, value)
+                
+                # 设置对齐方式
+                item.setTextAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+                
+                self.data_table.setItem(row_idx, col_idx, item)
             
-            # 添加条形码和二维码（与原来相同）
-            self.add_barcode_qrcode_to_table(row_idx, row_values, color)
+            # 添加条形码和二维码（★ v6.13：与表头同一套“图列”开关）
+            self.add_barcode_qrcode_to_table(row_idx, row_values, color, visible,
+                                             barcode_cols, qrcode_cols)
         
         self.data_table.resizeColumnsToContents()
         self.data_table.resizeRowsToContents()
@@ -7358,28 +9420,59 @@ class MainWindow(QMainWindow):
         # 所以返回原始文本，高亮效果可以在单元格渲染器中实现
         return text
 
-    def add_barcode_qrcode_to_table(self, row_idx, row_values, color):
-        """为表格行添加条形码和二维码"""
-        col_offset = len(self.columns_config)
+    def add_barcode_qrcode_to_table(self, row_idx, row_values, color, columns=None,
+                                    barcode_cols=None, qrcode_cols=None):
+        """为表格行添加条形码和二维码
+
+        ★ v6.10：只画“显示列”里的条码/二维码列，与表头一致；取值按【列名】取
+        （原来是按位置，配置与表结构一旦不一致就会串列）。
+        ★ v6.13：条形码/二维码图列可以单独控制（`_visible_image_columns()`）；
+        图列条目用 `source` 指向来源列取值。
+        """
+        if columns is None:
+            columns = self._visible_columns(self.columns_config)
+        if barcode_cols is None:
+            barcode_cols = self._visible_image_columns('barcode', self.columns_config)
+        if qrcode_cols is None:
+            qrcode_cols = self._visible_image_columns('qrcode', self.columns_config)
+        col_index = self._table_column_index(self.columns_config)
+        col_offset = len(columns)
         
         # 添加条形码
-        barcode_cols = [col for col in self.columns_config if col.get('is_barcode', False)]
         for col in barcode_cols:
-            barcode_value = row_values[self.columns_config.index(col)]
-            barcode_img = self.generate_barcode(barcode_value)
+            barcode_value = self._value_by_name(col_index, row_values,
+                                                col.get('source') or col['name'])
+            _bg = barcode_background_for(barcode_value, col.get('barcode_format', 'auto'),
+                                         col.get('barcode_subset', 'auto'))
+            barcode_img = (self.generate_barcode(barcode_value,
+                                                 col.get('barcode_format', 'auto'),
+                                                 col.get('barcode_subset', 'auto'),
+                                                 background=_bg)
+                           if barcode_value else None)
             if barcode_img:
-                label = QLabel()
-                label.setPixmap(QPixmap.fromImage(barcode_img))
+                # ★ v6.21：缩略图（行高不变）+ 双击放大（放大后可直接扫）
+                label = BarcodeZoomLabel()
+                label.setPixmap(self.barcode_preview_pixmap(barcode_img))
                 label.setAlignment(Qt.AlignCenter)
-                label.setStyleSheet(f"background-color: {color};")
+                # ★ v6.20：不符合子集的条码图用浅红底
+                label.setStyleSheet(f"background-color: {_bg or color};")
+                # ★ v6.19：悬停看实际用的哪个子集
+                label.setToolTip(describe_barcode_encoding(
+                    barcode_value, col.get('barcode_format', 'auto'),
+                    col.get('barcode_subset', 'auto'))
+                    + '\n（表格里是缩略图 —— 双击这张条码可放大，放大后就能直接扫）')
+                label.doubleClicked.connect(partial(
+                    self.show_barcode_zoom, barcode_value,
+                    col.get('barcode_format', 'auto'),
+                    col.get('barcode_subset', 'auto'), _bg))
                 self.data_table.setCellWidget(row_idx, col_offset, label)
             col_offset += 1
         
         # 添加二维码
-        qrcode_cols = [col for col in self.columns_config if col.get('is_qrcode', False)]
         for col in qrcode_cols:
-            qrcode_value = row_values[self.columns_config.index(col)]
-            qrcode_img = self.generate_qrcode(qrcode_value)
+            qrcode_value = self._value_by_name(col_index, row_values,
+                                               col.get('source') or col['name'])
+            qrcode_img = self.generate_qrcode(qrcode_value) if qrcode_value else None
             if qrcode_img:
                 label = QLabel()
                 label.setPixmap(QPixmap.fromImage(qrcode_img))
@@ -7581,14 +9674,131 @@ class MainWindow(QMainWindow):
         self.update_btn.setEnabled(False)
 
     
-    def show_item_detail(self, index):
-        """显示选中项的详细信息，确保只显示配置中标记为条形码/二维码的列"""
+    def _build_detail_nav(self):
+        """详情页导航条（★ v6.16）：⬆上一条 / ⬇下一条 + 位置提示 + 回到列表
+
+        用户要求：「详细信息增加 向上和向下翻，就不用每次都回到列表点才能看详细，
+        直接详细就可以直接下一个，或者上一个」。
+        """
+        nav = QHBoxLayout()
+
+        self.detail_prev_btn = QPushButton('⬆ 上一条')
+        self.detail_prev_btn.setToolTip('看上一条记录的详情（Alt+↑）')
+        self.detail_prev_btn.clicked.connect(lambda: self.detail_goto_offset(-1))
+        nav.addWidget(self.detail_prev_btn)
+
+        self.detail_next_btn = QPushButton('⬇ 下一条')
+        self.detail_next_btn.setToolTip('看下一条记录的详情（Alt+↓）')
+        self.detail_next_btn.clicked.connect(lambda: self.detail_goto_offset(1))
+        nav.addWidget(self.detail_next_btn)
+
+        self.detail_pos_label = QLabel('')
+        self.detail_pos_label.setStyleSheet('color: #666;')
+        nav.addWidget(self.detail_pos_label)
+
+        nav.addStretch()
+
+        # ★ v6.22：详情页也能直接改“哪些项目不显示”（想只看二维码/只看一维码时最顺手）
+        self.detail_visibility_btn = QPushButton('👁️ 显示设置')
+        self.detail_visibility_btn.setToolTip(
+            '选择这个详情页里显示哪些项目（字段 / 条形码 / 二维码）\n'
+            '例如只看二维码、只看一维码；只影响详情页显示，数据不受影响')
+        self.detail_visibility_btn.clicked.connect(self.configure_detail_visibility)
+        nav.addWidget(self.detail_visibility_btn)
+
+        self.detail_back_btn = QPushButton('📊 回到列表')
+        self.detail_back_btn.setToolTip('切回「📊数据列表」（选中行已经跟着翻到这里了）')
+        self.detail_back_btn.clicked.connect(self.detail_back_to_list)
+        nav.addWidget(self.detail_back_btn)
+        return nav
+
+    def _update_detail_nav(self, row=None):
+        """刷新详情页导航（★ v6.16）：第一条/最后一条时把对应按钮置灰 + 显示「第 N / M 条」"""
+        try:
+            rows = self.data_table.rowCount()
+            if row is None:
+                row = self.data_table.currentRow()
+            if rows <= 0 or row is None or row < 0:
+                self.detail_pos_label.setText('（没有数据）')
+                self.detail_prev_btn.setEnabled(False)
+                self.detail_next_btn.setEnabled(False)
+                return
+            self.detail_pos_label.setText(f'第 {row + 1} / {rows} 条')
+            self.detail_prev_btn.setEnabled(row > 0)
+            self.detail_next_btn.setEnabled(row < rows - 1)
+        except Exception as e:
+            print(f"[DEBUG] 刷新详情导航失败: {str(e)}")
+
+    def detail_goto_offset(self, offset, need_detail_tab=False):
+        """详情页翻上一条 / 下一条（★ v6.16）
+
+        做法：把表格当前行上/下移一条（列表的选中也跟着走，回到列表时位置对得上），
+        然后重画详情。到头了就状态栏提示，不会绕回另一头（避免“翻着翻着跑回去了”）。
+        """
+        if need_detail_tab and self.tab_widget.currentWidget() is not self.detail_widget:
+            return  # 快捷键只在详情页生效
+        rows = self.data_table.rowCount()
+        if rows <= 0:
+            notify(self, '当前没有数据', 'warn')
+            return
+        cur = self.data_table.currentRow()
+        if cur is None or cur < 0:
+            cur = 0
+        target = cur + offset
+        if target < 0:
+            self.status_bar.showMessage('已经是第一条了', 4000)
+            self._update_detail_nav(row=cur)
+            return
+        if target >= rows:
+            self.status_bar.showMessage(f'已经是最后一条了（共 {rows} 条）', 4000)
+            self._update_detail_nav(row=cur)
+            return
+
+        # 选中跟着一起走（blockSignals 避免重复触发选中变化处理）
+        self.data_table.blockSignals(True)
+        try:
+            self.data_table.selectRow(target)
+            self.data_table.setCurrentCell(target, 0)
+        finally:
+            self.data_table.blockSignals(False)
+        item = self.data_table.item(target, 0)
+        if item is not None:
+            self.data_table.scrollToItem(item, QAbstractItemView.PositionAtCenter)
+        self.show_item_detail(row=target)
+
+    def detail_back_to_list(self):
+        """详情页 → 回到数据列表（★ v6.16；此时列表选中已经在同一条上）"""
+        try:
+            self.tab_widget.setCurrentWidget(self.data_table)
+        except Exception as e:
+            print(f"[DEBUG] 切回数据列表失败: {str(e)}")
+
+    def show_item_detail(self, index=None, row=None):
+        """显示选中项的详细信息，确保只显示配置中标记为条形码/二维码的列
+
+        ★ v6.16：`index`（双击表格给的 QModelIndex）和 `row`（详情页翻上/下一条用）
+        二选一；都不给就用当前选中行。
+        """
         # 清除之前的详情内容（★ v6.3：改用安全的布局清空）
         self._clear_layout(self.detail_layout)
         
         # 获取选中数据
-        row = index.row()
-        rowid = self.data_table.item(row, 0).data(Qt.UserRole)
+        if row is None:
+            row = index.row() if index is not None else self.data_table.currentRow()
+        if row is None or row < 0 or row >= self.data_table.rowCount():
+            self._update_detail_nav(row=-1)
+            return
+        self._update_detail_nav(row=row)
+        # ★ v6.22：记住“现在详情页显示的是第几条”
+        #   —— 改显示设置后重画时用它兜底（表格刚重画过时 currentRow() 可能是 -1，
+        #      直接用它重画会把详情页清空）
+        self._detail_row = row
+
+        item0 = self.data_table.item(row, 0)
+        if item0 is None:
+            print(f"[DEBUG] 第 {row} 行还没渲染出来，跳过详情")
+            return
+        rowid = item0.data(Qt.UserRole)
         data = self.user_db.get_data_by_id(rowid)
         print(f"[DEBUG] Selected row ID: {rowid}")
 
@@ -7604,6 +9814,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(content)
         
         # 1. 基本信息区块
+        #   ★ v6.22：只画「详细信息显示设置」里勾了的字段（全被隐藏就不画这一块）
         info_group = QGroupBox("基本信息")
         form = QFormLayout()
         
@@ -7613,6 +9824,9 @@ class MainWindow(QMainWindow):
         # 修改点2：确保列配置和列值正确对应
         for col_idx, col in enumerate(self.columns_config):
             if col_idx < len(values):
+                # ★ v6.22：这一列被设为“详情页不显示” → 跳过
+                if not self._detail_item_visible(DETAIL_FIELD_PREFIX + str(col.get('name'))):
+                    continue
                 # 特殊字段标记
                 label_text = col['label']
                 if col.get('is_unique', False):
@@ -7624,6 +9838,16 @@ class MainWindow(QMainWindow):
                 value = QLabel(str(values[col_idx]) if values[col_idx] else "(空)")
                 value.setTextInteractionFlags(Qt.TextSelectableByMouse)
                 
+                # ★ v6.18：不符合该列 Code128 子集的值 → 跟数据列表一致用深红标出来
+                #   （详情页底色是浅色窗底，深红对比度更高，一样看得清）
+                _mismatch = code128_subset_mismatch(
+                    values[col_idx], col.get('barcode_format', 'auto'),
+                    col.get('barcode_subset', 'auto'))
+                if _mismatch:
+                    value.setStyleSheet(
+                        f'color: {BARCODE_MISMATCH_COLOR}; font-weight: bold;')
+                    value.setToolTip(f'⚠️ {_mismatch}')
+                
                 if col.get('is_unique', False):
                     label.setStyleSheet("color: #4CAF50; font-weight: bold;")
                 if col.get('is_required', False):
@@ -7631,10 +9855,13 @@ class MainWindow(QMainWindow):
                 
                 form.addRow(label, value)
         
-        info_group.setLayout(form)
-        layout.addWidget(info_group)
+        # ★ v6.22：字段全被隐藏时这块整个不画（否则会出现一个空的「基本信息」框）
+        if form.count() > 0:
+            info_group.setLayout(form)
+            layout.addWidget(info_group)
 
         # 2. 条形码区块 - 只处理配置中标记为is_barcode=True的列
+        #   ★ v6.22：还要过「详细信息显示设置」（barcode:<列名> 没被隐藏才画）
         barcode_cols = [col for col in self.columns_config if col.get('is_barcode', False)]
         if barcode_cols:
             barcode_group = QGroupBox("条形码信息")
@@ -7642,15 +9869,32 @@ class MainWindow(QMainWindow):
 
             for col in barcode_cols:
                 col_idx = self.columns_config.index(col)
+                if not self._detail_item_visible(DETAIL_BARCODE_PREFIX + str(col.get('name'))):
+                    continue
                 if col_idx < len(values) and values[col_idx]:
                     value = values[col_idx]
                     
-                    # 生成条形码图像
-                    barcode_img = self.generate_barcode(value)
+                    # 生成条形码图像（★ v6.9：按该列配置的格式/子集；★ v6.20：不符合子集用浅红底）
+                    _bg2 = barcode_background_for(value, col.get('barcode_format', 'auto'),
+                                                  col.get('barcode_subset', 'auto'))
+                    # ★ v6.21：详情页是「拿来扫」的地方 → 用 2 倍分辨率出图（每模块 ≥4px）
+                    barcode_img = self.generate_barcode(value,
+                                                        col.get('barcode_format', 'auto'),
+                                                        col.get('barcode_subset', 'auto'),
+                                                        background=_bg2,
+                                                        scale=BARCODE_RENDER_SCALE)
                     if barcode_img:
                         # 原始值标签
                         value_label = QLabel(f"{col['label']}：{value}")
                         value_label.setStyleSheet("font-weight: bold;")
+                        # ★ v6.18：这个值装不进所选 Code128 子集 → 与列表一致用深红标出来
+                        _mismatch2 = code128_subset_mismatch(
+                            value, col.get('barcode_format', 'auto'),
+                            col.get('barcode_subset', 'auto'))
+                        if _mismatch2:
+                            value_label.setStyleSheet(
+                                f'color: {BARCODE_MISMATCH_COLOR}; font-weight: bold;')
+                            value_label.setToolTip(f'⚠️ {_mismatch2}')
                         barcode_layout.addWidget(value_label)
                         
                         # 条形码图像
@@ -7658,7 +9902,19 @@ class MainWindow(QMainWindow):
                         pixmap = QPixmap.fromImage(barcode_img)
                         img_label.setPixmap(pixmap)
                         img_label.setAlignment(Qt.AlignCenter)
+                        # ★ v6.20：不符合子集 → 浅红底
+                        img_label.setStyleSheet(f"background-color: {_bg2 or 'white'};")
+                        # ★ v6.19：条码图下面直接写出「实际用的哪种子集」
+                        _enc_desc = describe_barcode_encoding(
+                            value, col.get('barcode_format', 'auto'),
+                            col.get('barcode_subset', 'auto'))
+                        img_label.setToolTip(_enc_desc
+                                             + '\n（这张是放大出图，可直接对着扫）')
                         barcode_layout.addWidget(img_label)
+                        enc_label = QLabel(f'编码：{_enc_desc}　·　这张图已放大出图，可直接扫')
+                        enc_label.setStyleSheet('color: #666; font-size: 11px;')
+                        enc_label.setWordWrap(True)
+                        barcode_layout.addWidget(enc_label)
                         
                         # 添加分隔线
                         barcode_layout.addWidget(QLabel("─"*50))
@@ -7668,6 +9924,7 @@ class MainWindow(QMainWindow):
                 layout.addWidget(barcode_group)
 
         # 3. 二维码区块 - 只处理配置中标记为is_qrcode=True的列
+        #   ★ v6.22：还要过「详细信息显示设置」（qrcode:<列名> 没被隐藏才画）
         qrcode_cols = [col for col in self.columns_config if col.get('is_qrcode', False)]
         if qrcode_cols:
             qrcode_group = QGroupBox("二维码信息")
@@ -7675,6 +9932,8 @@ class MainWindow(QMainWindow):
             
             for col in qrcode_cols:
                 col_idx = self.columns_config.index(col)
+                if not self._detail_item_visible(DETAIL_QRCODE_PREFIX + str(col.get('name'))):
+                    continue
                 if col_idx < len(values) and values[col_idx]:
                     value = values[col_idx]
                     # 生成二维码图像
@@ -7746,7 +10005,11 @@ class MainWindow(QMainWindow):
             for col in barcode_cols:
                 col_idx = self.columns_config.index(col)
                 if col_idx < len(values) and values[col_idx]:
-                    img = self.generate_barcode(values[col_idx])
+                    # ★ v6.21：导出的图片是给别家程序扫的 → 2 倍分辨率（原来只有 97px 宽）
+                    img = self.generate_barcode(values[col_idx],
+                                                col.get('barcode_format', 'auto'),
+                                                col.get('barcode_subset', 'auto'),
+                                                scale=BARCODE_RENDER_SCALE)
                     if img:
                         filename = f"{path}/{col['name']}_barcode.png"
                         img.save(filename)
@@ -7809,6 +10072,17 @@ class MainWindow(QMainWindow):
         dialog.resize(600, 400)
         
         layout = QVBoxLayout()
+
+        # ★ v6.10：让人一眼看到“现在到底显示了几列”
+        try:
+            total_cols = len(self.columns_config or [])
+            visible_cols = len(self._visible_columns())
+            hidden_cols = total_cols - visible_cols
+            layout.addWidget(QLabel(
+                f'列：共 {total_cols} 列，数据列表显示 {visible_cols} 列'
+                + (f'（隐藏 {hidden_cols} 列）' if hidden_cols > 0 else '（全部显示）')))
+        except Exception:
+            pass
         
         layout.addWidget(QLabel('当前列配置（JSON）：'))
 
@@ -7828,6 +10102,26 @@ class MainWindow(QMainWindow):
 
         modify_btn.clicked.connect(_on_modify)
         btn_row.addWidget(modify_btn)
+
+        # ★ v6.10：登录后直接在这里改“数据列表显示哪几列”
+        visibility_btn = QPushButton('👁️显示列设置')
+
+        def _on_visibility():
+            clicked['visibility'] = True
+            dialog.accept()
+
+        visibility_btn.clicked.connect(_on_visibility)
+        btn_row.addWidget(visibility_btn)
+
+        # ★ v6.22：登录后直接在这里改“详细信息页显示哪些项目”
+        detail_visibility_btn = QPushButton('🔎详细信息显示设置')
+
+        def _on_detail_visibility():
+            clicked['detail_visibility'] = True
+            dialog.accept()
+
+        detail_visibility_btn.clicked.connect(_on_detail_visibility)
+        btn_row.addWidget(detail_visibility_btn)
         layout.addLayout(btn_row)
         
         # 关闭按钮
@@ -7837,11 +10131,15 @@ class MainWindow(QMainWindow):
         
         dialog.setLayout(layout)
 
-        clicked = {'modify': False}
+        clicked = {'modify': False, 'visibility': False, 'detail_visibility': False}
         dialog.exec()
 
         if clicked['modify']:
             self.modify_columns_config()
+        elif clicked['visibility']:
+            self.configure_column_visibility()
+        elif clicked['detail_visibility']:
+            self.configure_detail_visibility()
 
     def modify_columns_config(self):
         """修改当前登录用户的列配置（★ v6.5）
@@ -7924,6 +10222,16 @@ class MainWindow(QMainWindow):
         # 刷新界面：列配置 / 表头 / 统计 / 详情
         self.columns_config = new_columns_config
         self.current_rowid = None
+        # ★ v6.10：列改名/删列后，把对不上的“隐藏列”清掉，免得以后新列同名却天生隐藏
+        try:
+            self._sanitize_hidden_columns(persist=True)
+        except Exception as e:
+            print(f"[DEBUG] 校正显示列设置失败: {str(e)}")
+        # ★ v6.22：详情页的“显示项”同理（field:/barcode:/qrcode: 旧键一起清）
+        try:
+            self._sanitize_hidden_detail_items(persist=True)
+        except Exception as e:
+            print(f"[DEBUG] 校正详细信息显示设置失败: {str(e)}")
         try:
             self.sort_orders = {}
             self._clear_layout(self.detail_layout)
@@ -7999,81 +10307,116 @@ class MainWindow(QMainWindow):
         msg_box.exec()
 
     
-    def logout(self):
-        reply = QMessageBox.question(self, '确认', '确定要退出当前用户吗?', 
-                                   QMessageBox.Yes | QMessageBox.No)
-        if reply == QMessageBox.Yes:
-            self.user_db.close()
-            if self.parent_window:  # 检查父窗口是否存在
-                self.parent_window.show()
-            self.close()
-    
-    def generate_barcode(self, data):
+    def switch_user(self):
+        """👤切换用户登录（★ v6.15）：回到登录窗口换人登录，**程序不退出**
+
+        用户要求：「点程序关闭就关闭，不用返回到登录窗口。程序增加切换用户登录就可以了。」
+        所以「关闭 / ❌退出程序」现在是真退出，换人登录改由这里负责：
+          * 先弹一次确认（避免误点）；
+          * 置 `_switching_user=True` 再 `close()` —— `closeEvent` 里照旧保存设置、
+            取消线程、自动备份、关库，**只有这种情况下**才把登录窗口显示回来。
         """
-        生成条形码图像，支持Code128和EAN13标准
-        对于非ASCII字符会自动转换为哈希值
+        reply = QMessageBox.question(
+            self, '切换用户登录',
+            '确定要切换到其它用户登录吗？\n\n当前数据已即时保存；'
+            '切换后会回到登录窗口（程序不退出）。',
+            QMessageBox.Yes | QMessageBox.No)
+        if reply != QMessageBox.Yes:
+            return
+        self._switching_user = True
+        self.close()
+
+    def logout(self):
+        """旧名字，保留兼容 —— 现在就是「👤切换用户登录」（★ v6.15）"""
+        self.switch_user()
+    
+    def generate_barcode(self, data, barcode_format='auto', subset='auto', background=None,
+                         scale=1):
+        """
+        生成条形码图像（返回**原始分辨率**的 QImage，不再缩小）
+
+        ★ v6.9：支持按列配置指定编码格式与 Code128 子集
+          barcode_format: auto / code128 / ean13 / ean8 / upca / code39
+          subset:         Code128 子集 auto / A / B / C
+        ★ v6.20：`background` 可指定条码底色（None＝白底）—— 表格里用浅红底标出
+          “装不进所选子集”的条码图（`barcode_background_for()`），导出/打印仍用白底。
+        ★ v6.21：`scale` = 出图分辨率倍数（dpi=300*scale）。**不再把图缩到高 100px** ——
+          那会把 10 位数字的 C 条码压成 97x100px（黑条只剩 1px、还被插值糊出灰边），
+          扫描器读不出来（用户报的「Code128 C 扫不出来」就是这个原因）。
+          表格里要小图请用 `barcode_preview_pixmap()` 自己缩；详情/导出/打印传
+          `BARCODE_RENDER_SCALE`（每模块 ≥4px）。
+        对于非ASCII字符会自动转换为「拼音首字母+哈希」再编码（原有逻辑保留）。
         """
         # 延迟导入重型模块，减少启动时间
-        from barcode import EAN13, Code128
-        from barcode.writer import ImageWriter
         from PIL import Image
         
         if not data:
             return None
         
         try:
-            data_str = str(data)
+            data_str = barcode_display_text(data)   # ★ v6.19：非 ASCII 转拼音+哈希统一在这里
             
-            # 检查是否包含非ASCII字符
-            requires_encoding = False
-            for char in data_str:
-                if ord(char) > 127:  # 非ASCII字符
-                    requires_encoding = True
-                    break
+            # ★ v6.9：按「列配置里选的格式 + Code128 子集」出码
+            #   （数据不满足所选格式时自动回退 Code128，不会出现空白条码）
+            barcode, used_format, note = build_barcode_object(
+                data_str, barcode_format, subset)
+            if note:
+                print(f"[DEBUG] {note}（原始值={data_str}）")
             
-            # 如果包含非条形码支持字符
-            if requires_encoding:
-                # 使用更友好的编码方式 - 首字母拼音+哈希
-                from pypinyin import lazy_pinyin
-                import hashlib
-                
-                # 获取拼音首字母
-                pinyin_initials = ''.join([x[0] for x in lazy_pinyin(data_str) if x])
-                
-                # 生成短哈希
-                hash_str = hashlib.md5(data_str.encode('utf-8')).hexdigest()[:6]
-                
-                # 组合成最终编码
-                data_str = f"{pinyin_initials}_{hash_str}".upper()
-                
-                # 确保不超过长度限制
-                data_str = data_str[:80]
-            
-            # 自动选择条码类型
-            if data_str.isdigit() and len(data_str) == 13:  # EAN13标准
-                barcode = EAN13(data_str, writer=ImageWriter())
-            else:  # 默认使用Code128
-                barcode = Code128(data_str, writer=ImageWriter())
-            
+            # ★ v6.21：靠提高 dpi 把图出大（条宽=整数像素、没有灰度过渡），
+            #   绝不能先出小图再放大/缩小 —— 缩小会直接毁掉条码图案。
+            opts = {'dpi': int(300 * max(1.0, float(scale or 1)))}
+            if background:
+                opts['background'] = background   # ★ v6.20
             buffer = io.BytesIO()
-            barcode.write(buffer)
+            barcode.write(buffer, options=opts)
             
             img = Image.open(buffer)
             img = img.convert("RGBA")
-            
-            # 调整大小
-            width, height = img.size
-            new_height = 100
-            new_width = int(width * (new_height / height))
-            
-            data = img.tobytes("raw", "RGBA")
-            qimage = QImage(data, img.size[0], img.size[1], QImage.Format_RGBA8888)
-            
-            return qimage.scaled(new_width, new_height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            raw = img.tobytes("raw", "RGBA")
+            # .copy() 必须留：QImage 不复制 raw 缓冲区，raw 出作用域后就是野指针
+            return QImage(raw, img.size[0], img.size[1],
+                          QImage.Format_RGBA8888).copy()
         
         except Exception as e:
             print(f"生成条形码失败: {e}")
             return None
+    
+    def barcode_preview_pixmap(self, image):
+        """把条码图缩成表格里用的**缩略图**（★ v6.21，高度 BARCODE_PREVIEW_HEIGHT）
+
+        `generate_barcode()` 现在返回的是可扫描的高分辨率图（几百 px 高），
+        直接塞进表格会把行高撑爆；表格单元格统一走这里缩略显示（行高与旧版一致）。
+        缩略图只是给人看的示意图，**要扫描请双击看详细信息、或导出图片**。
+        """
+        if image is None:
+            return None
+        pixmap = QPixmap.fromImage(image)
+        if pixmap.height() > BARCODE_PREVIEW_HEIGHT:
+            pixmap = pixmap.scaledToHeight(BARCODE_PREVIEW_HEIGHT, Qt.SmoothTransformation)
+        return pixmap
+    def show_barcode_zoom(self, value, barcode_format='auto', subset='auto', background=None):
+        """双击表格里的条码缩略图 → 弹出放大条码（★ v6.21，能直接被扫描器读）
+
+        表格里的缩略图只有 100px 高、条太细（扫不出来），这里按 `BARCODE_RENDER_SCALE`
+        **重新出一张高分辨率大图**（不缩放缩略图！缩放会把条糊掉），大图可以直接对着
+        屏幕扫，也可以「另存为 PNG」交给别的程序读。
+        """
+        if not value:
+            return
+        try:
+            image = self.generate_barcode(value, barcode_format, subset,
+                                          background=background,
+                                          scale=BARCODE_RENDER_SCALE)
+            if image is None:
+                notify(self, f'“{value}”生成不了条码图', 'warn')
+                return
+            encoding = describe_barcode_encoding(value, barcode_format, subset)
+            dlg = BarcodeZoomDialog(self, image, value, encoding,
+                                    background=BARCODE_MISMATCH_BG_COLOR if background else None)
+            dlg.exec()
+        except Exception as e:
+            notify(self, f'放大条码失败：{str(e)}', 'error')
 
 
 
@@ -8171,7 +10514,11 @@ class MainWindow(QMainWindow):
                     if col_idx < len(values) and values[col_idx]:
                         barcode_value = values[col_idx]
                         # 保存条形码图片到临时文件
-                        barcode_img = self.generate_barcode(barcode_value)
+                        # ★ v6.21：打印出来的条码必须够清晰 → 2 倍分辨率
+                        barcode_img = self.generate_barcode(
+                            barcode_value, col.get('barcode_format', 'auto'),
+                            col.get('barcode_subset', 'auto'),
+                            scale=BARCODE_RENDER_SCALE)
                         if barcode_img:
                             temp_file = "temp_barcode.png"
                             barcode_img.save(temp_file)
@@ -8425,6 +10772,11 @@ class MainWindow(QMainWindow):
         menu.addAction(print_action)
         
         menu.addSeparator()
+
+        # ★ v6.10：显示列设置（只影响显示，数据不动）
+        visibility_action = QAction('👁️ 显示列设置', self)
+        visibility_action.triggered.connect(self.configure_column_visibility)
+        menu.addAction(visibility_action)
         
         # 刷新
         refresh_action = QAction('🔄 刷新', self)
@@ -8681,7 +11033,11 @@ class MainWindow(QMainWindow):
                 for col in barcode_cols:
                     col_idx = self.columns_config.index(col)
                     if col_idx < len(data)-1 and data[col_idx+1]:  # +1跳过rowid
-                        img = self.generate_barcode(data[col_idx+1])
+                        # ★ v6.21：批量导出给别家程序扫 → 2 倍分辨率（原来只有 97px 宽）
+                        img = self.generate_barcode(data[col_idx+1],
+                                                    col.get('barcode_format', 'auto'),
+                                                    col.get('barcode_subset', 'auto'),
+                                                    scale=BARCODE_RENDER_SCALE)
                         if img:
                             filename = f"{path}/row{row}_{col['name']}_barcode.png"
                             img.save(filename)
